@@ -1,17 +1,15 @@
 (ns user
-  (:require [clojure.string :refer [join]]
-            [clox.ast-printer :refer [->AstPrinter]]
+  (:require [clox.ast-printer :refer [print-ast]]
             [clox.expression :as expr]
-            [clox.token :refer [->Token]]
+            [clox.parser :refer [parse]]
+            [clox.report :refer [error?]]
             [clox.scanner :refer [scan-tokens]]
-            [clox.report :refer [error?]]))
+            [clox.token :refer [->Token]]))
 
 (defn run [source]
-  (println
-   (join
-    "\n"
-    (map str
-         (scan-tokens source)))))
+  (let [tokens (scan-tokens source)
+        {ast :expr} (parse {:tokens tokens})]
+    (print-ast ast)))
 
 (defn run-file [path]
   (run (slurp path))

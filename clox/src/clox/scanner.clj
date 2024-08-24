@@ -38,7 +38,7 @@
          line 1
          tokens []]
     (if (empty? source)
-      tokens
+      (conj tokens (->Token :eof nil nil line))
       (let [next-char (first source)
             leftover (subs source 1)
             add-token (fn [type & [lexeme literal]] (conj tokens (->Token type (or lexeme next-char) literal line)))

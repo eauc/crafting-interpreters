@@ -17,8 +17,8 @@
     (parenthesize "get" (-> e :object (expr/accept p)) (-> e :name :lexeme)))
   (visit-grouping-expr [p ^expr/GroupingExpr e]
     (parenthesize (-> e :expr (expr/accept p))))
-  (visit-literal-expr [_ ^expr/LiteralExpr e]
-    (:value e))
+  (visit-literal-expr [_ ^expr/LiteralExpr {:keys [value]}]
+    (if (nil? value) "nil" value))
   (visit-logical-expr [p ^expr/LogicalExpr e]
     (parenthesize (-> e :left (expr/accept p)) (-> e :operator :lexeme) (-> e :right (expr/accept p))))
   (visit-set-expr [p ^expr/SetExpr e]
@@ -31,3 +31,10 @@
     (parenthesize (-> e :operator :lexeme) (-> e :right (expr/accept p))))
   (visit-variable-expr [_ ^expr/VariableExpr e]
     (parenthesize "var" (-> e :name :lexeme))))
+
+(defn print-ast
+  [ast]
+  (when ast
+    (let [printer (->AstPrinter ast)]
+      (println
+       (expr/accept ast printer)))))
