@@ -1,6 +1,7 @@
 (ns user
   (:require [clox.ast-printer :refer [print-ast]]
             [clox.expression :as expr]
+            [clox.interpreter :refer [run-ast runtime-error?]]
             [clox.parser :refer [parse]]
             [clox.report :refer [error?]]
             [clox.scanner :refer [scan-tokens]]
@@ -9,12 +10,15 @@
 (defn run [source]
   (let [tokens (scan-tokens source)
         {ast :expr} (parse {:tokens tokens})]
-    (print-ast ast)))
+    (print-ast ast)
+    (run-ast ast)))
 
 (defn run-file [path]
   (run (slurp path))
   (when @error?
-    (System/exit 65)))
+   (System/exit 65))
+  (when @runtime-error?
+    (System/exit 70)))
 
 (defn run-prompt []
   (loop []

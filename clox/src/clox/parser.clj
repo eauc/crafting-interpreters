@@ -2,7 +2,7 @@
   (:require [clox.expression :as e]
             [clox.report :refer [report]]))
 
-(defn error
+(defn parse-error
   [message tokens]
   (let [[{token-type :type line :line lexeme :lexeme}] tokens]
     (if (= token-type :eof)
@@ -38,8 +38,8 @@
       :left-paren (let [{expr :expr tokens' :tokens} (expression {:tokens tokens'})]
                     (if-let [{tokens' :tokens} (match {:tokens tokens' :types #{:right-paren}})]
                       {:expr (e/->GroupingExpr expr) :tokens tokens'}
-                      (throw (error "Expected ')' after expression." tokens))))
-      (throw (error "Expected expression." tokens)))))
+                      (throw (parse-error "Expected ')' after expression." tokens))))
+      (throw (parse-error "Expected expression." tokens)))))
 
 (defn unary
   [{:keys [tokens]}]
