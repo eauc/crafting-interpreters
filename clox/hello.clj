@@ -1,7 +1,7 @@
 (ns user
   (:require [clox.ast-printer :refer [print-ast]]
             [clox.expression :as expr]
-            [clox.interpreter :refer [run-ast runtime-error?]]
+            [clox.interpreter :refer [interpret runtime-error?]]
             [clox.parser :refer [parse]]
             [clox.report :refer [error?]]
             [clox.scanner :refer [scan-tokens]]
@@ -9,14 +9,13 @@
 
 (defn run [source]
   (let [tokens (scan-tokens source)
-        {ast :expr} (parse {:tokens tokens})]
-    (print-ast ast)
-    (run-ast ast)))
+        {:keys [stmts]} (parse {:tokens tokens})]
+    (interpret stmts)))
 
 (defn run-file [path]
   (run (slurp path))
   (when @error?
-   (System/exit 65))
+    (System/exit 65))
   (when @runtime-error?
     (System/exit 70)))
 
@@ -36,10 +35,9 @@
               (expr/->LiteralExpr 123.45))
              (->Token :star "*")
              (expr/->GroupingExpr
-              (expr/->LiteralExpr 45.67)))
-        printer (->AstPrinter ast)]
+              (expr/->LiteralExpr 45.67)))]
     (println
-     (expr/accept ast printer))))
+     (print-ast ast))))
 
 (when (< 1 (count *command-line-args*))
   (println "Usage: clox [script]")

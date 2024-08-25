@@ -75,11 +75,11 @@
                (recur leftover line (add-token :greater)))
           \" (if-let [closing (index-of leftover "\"")]
                (recur (subs leftover (inc closing))
-                      (+ line (get (frequencies leftover) \newline 0))
+                      (+ line (get (frequencies (subs leftover 0 closing)) \newline 0))
                       (add-token :string (subs source 0 (+ closing 2)) (subs leftover 0 closing)))
                (do (error {:line line :message "Unterminated string."})
                    tokens))
-          (cond 
+          (cond
             (digit? next-char)
             (let [digits' (take-while #(or (digit? %) (= \. %)) source)
                   digits (if (= \. (last digits')) (butlast digits') digits')
@@ -92,9 +92,9 @@
             (let [idents (take-while #(alphanumeric? %) source)
                   size (count idents)
                   lexeme (subs source 0 size)]
-             (recur (subs source size)
-                    line
-                    (add-token (get keywords lexeme :identifier) lexeme)))
+              (recur (subs source size)
+                     line
+                     (add-token (get keywords lexeme :identifier) lexeme)))
             :else
             (do (error {:line line :message "Unexpected character."})
                 tokens)))))))

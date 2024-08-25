@@ -1,6 +1,15 @@
 (ns clox.interpreter
   (:require [clojure.string :refer [replace]]
-            [clox.expression :as expr]))
+            [clox.environment :as env]
+            [clox.expression :as expr]
+            [clox.statement :as stmt]))
+
+(defn stringify
+  [value]
+  (cond
+    (nil? value) "nil"
+    (double? value) (replace (str value) #"\.0+$" "")
+    :else (str value)))
 
 (defn runtime-error
   [token message]
@@ -16,8 +25,12 @@
   (when-not (and (double? left) (double? right))
     (throw (runtime-error operator "Operands must be number."))))
 
-(defrecord Interpreter [^expr/Expr ast]
+(defrecord Interpreter [environment]
   expr/ExprVisitor
+  (visit-assign-expr [i {:keys [name value]}]
+    (let [value (expr/accept value i)]
+      (swap! environment env/assign-var name value)
+      value))
   (visit-binary-expr [i {:keys [left operator right]}]
     (let [left-value (expr/accept left i)
           right-value (expr/accept right i)]
@@ -64,28 +77,32 @@
                  (check-number-operand {:operator operator :operand value})
                  (- (double value)))
         :bang (not value)
-        nil))))
-
-(defn stringify
-  [value]
-  (cond
-    (nil? value) "nil"
-    (double? value) (replace (str value) #"\.0+$" "")
-    :else (str value)))
+        nil)))
+  (visit-variable-expr [_ {:keys [name]}]
+    (env/get-var @environment name))
+  stmt/StmtVisitor
+  (visit-expression-stmt [i {:keys [expression]}]
+    (expr/accept expression i)
+    nil)
+  (visit-print-stmt [i {:keys [expression]}]
+    (let [value (expr/accept expression i)]
+      (println (stringify value))
+      nil))
+  (visit-var-stmt [i {:keys [name initializer]}]
+    (let [value (when initializer (expr/accept initializer i))]
+      (swap! environment env/define-var (:lexeme name) value)
+      nil)))
 
 (def runtime-error?
-  (atom false)) 
+  (atom false))
 
-(defn run-ast
-  [ast]
-  (when ast
-    (let [interpreter (->Interpreter ast)]
-      (try
-        (println
-         (stringify
-          (expr/accept ast interpreter)))
-        (catch Exception error
-          (case (-> error ex-data :type)
-            ::runtime-error (do (println (str (.getMessage error) "\nat " (-> error ex-data :token :lexeme) " [line " (-> error ex-data :token :line) "]"))
-                                (reset! runtime-error? true))
-            (throw error)))))))
+(defn interpret
+  [stmts]
+  (let [interpreter (->Interpreter (atom {}))]
+    (try
+      (doall (map #(stmt/accept % interpreter) (remove nil? stmts)))
+      (catch Exception error
+        (case (-> error ex-data :type)
+          ::runtime-error (do (println (str (.getMessage error) "\nat " (-> error ex-data :token :lexeme) " [line " (-> error ex-data :token :line) "]"))
+                              (reset! runtime-error? true))
+          (throw error))))))
