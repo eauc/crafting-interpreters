@@ -131,11 +131,29 @@
     {:stmt (s/->PrintStmt expr)
      :tokens tokens'}))
 
+(declare declaration)
+
+(defn block
+  [{:keys [tokens]}]
+  (loop [tokens' tokens
+         stmts []]
+    (if (#{:right-brace :eof} (-> tokens' first :type))
+      (let [{tokens' :tokens} (consume {:tokens tokens' :types #{:right-brace}
+                                        :error-message "Expected '}' after block."})]
+        {:stmts stmts
+         :tokens tokens'})
+      (let [{stmt :stmt tokens' :tokens} (declaration {:tokens tokens'})]
+        (recur tokens' (conj stmts stmt))))))
+
 (defn statement
   [{:keys [tokens]}]
   (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:print}})]
     (print-statement {:tokens tokens'})
-    (expression-statement {:tokens tokens})))
+    (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:left-brace}})]
+      (let [{stmts :stmts tokens' :tokens} (block {:tokens tokens'})]
+        {:stmt (s/->BlockStmt stmts)
+         :tokens tokens'})
+      (expression-statement {:tokens tokens}))))
 
 (defn var-declaration
   [{:keys [tokens]}]

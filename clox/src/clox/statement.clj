@@ -6,9 +6,14 @@
   (accept [e ^StmtVisitor v]))
 
 (defprotocol StmtVisitor
-  (visit-expression-stmt [_ s])
-  (visit-print-stmt [_ s])
-  (visit-var-stmt [_ s]))
+  (visit-block-stmt [v s])
+  (visit-expression-stmt [v s])
+  (visit-print-stmt [v s])
+  (visit-var-stmt [v s]))
+
+(defrecord BlockStmt [stmts]
+  Stmt
+  (accept [e ^StmtVisitor v] (visit-block-stmt v e)))
 
 (defrecord ExpressionStmt [^Expr expression]
   Stmt

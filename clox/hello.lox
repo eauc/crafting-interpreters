@@ -1,7 +1,10 @@
 print "one";
 var a = 1;
-var b = 2;
-print a = 2;
-print a + b;
+{
+  var b = 2;
+  print a = 2;
+  print a + b;
+}
+print a;
 -123 * (456.7) <= "toto";
 print 2 + 1;

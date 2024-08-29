@@ -29,7 +29,7 @@
   expr/ExprVisitor
   (visit-assign-expr [i {:keys [name value]}]
     (let [value (expr/accept value i)]
-      (swap! environment env/assign-var name value)
+      (env/assign-var! environment name value)
       value))
   (visit-binary-expr [i {:keys [left operator right]}]
     (let [left-value (expr/accept left i)
@@ -79,8 +79,11 @@
         :bang (not value)
         nil)))
   (visit-variable-expr [_ {:keys [name]}]
-    (env/get-var @environment name))
+    (env/get-var environment name))
   stmt/StmtVisitor
+  (visit-block-stmt [{:keys [environment]} {:keys [stmts]}]
+    (let [interpreter (->Interpreter (env/->Environment environment))]
+      (doall (map #(stmt/accept % interpreter) stmts))))
   (visit-expression-stmt [i {:keys [expression]}]
     (expr/accept expression i)
     nil)
@@ -90,7 +93,7 @@
       nil))
   (visit-var-stmt [i {:keys [name initializer]}]
     (let [value (when initializer (expr/accept initializer i))]
-      (swap! environment env/define-var (:lexeme name) value)
+      (env/define-var! environment (:lexeme name) value)
       nil)))
 
 (def runtime-error?
@@ -98,7 +101,7 @@
 
 (defn interpret
   [stmts]
-  (let [interpreter (->Interpreter (atom {}))]
+  (let [interpreter (->Interpreter (env/->Environment))]
     (try
       (doall (map #(stmt/accept % interpreter) (remove nil? stmts)))
       (catch Exception error
