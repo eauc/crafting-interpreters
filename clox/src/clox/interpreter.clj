@@ -2,6 +2,8 @@
   (:require [clojure.string :refer [replace]]
             [clox.environment :as env]
             [clox.expression :as expr]
+            [clox.report :refer [error?]]
+            [clox.resolver :refer [resolve-stmts]]
             [clox.statement :as stmt]))
 
 (defn stringify
@@ -27,11 +29,20 @@
 
 (declare execute-block)
 
-(defrecord Interpreter [globals environment]
+(defn lookup-variable
+  [{:keys [environment locals globals]} expr name-token]
+  (if-let [depth (get @locals expr)]
+    (env/get-var-at environment depth (:lexeme name-token))
+    (env/get-var globals name-token)))
+
+(defrecord Interpreter [globals locals environment]
   expr/ExprVisitor
-  (visit-assign-expr [i {:keys [name value]}]
-    (let [value (expr/accept value i)]
-      (env/assign-var! environment name value)
+  (visit-assign-expr [i {:keys [name value] :as expr}]
+    (let [value (expr/accept value i)
+          depth (get @locals expr)]
+      (if depth
+        (env/assign-var-at! environment depth name value)
+        (env/assign-var! globals name value))
       value))
   (visit-binary-expr [i {:keys [left operator right]}]
     (let [left-value (expr/accept left i)
@@ -98,8 +109,8 @@
                  (- (double value)))
         :bang (not value)
         nil)))
-  (visit-variable-expr [_ {:keys [name]}]
-    (env/get-var environment name))
+  (visit-variable-expr [i {:keys [name] :as expr}]
+    (lookup-variable i expr name))
   stmt/StmtVisitor
   (visit-block-stmt [{:keys [environment] :as i} {:keys [stmts]}]
     (execute-block i stmts (env/->Environment environment))
@@ -146,8 +157,8 @@
         nil))))
 
 (defn execute-block
-  [{:keys [globals]} stmts environment]
-  (let [interpreter (->Interpreter globals environment)]
+  [{:keys [globals locals]} stmts environment]
+  (let [interpreter (->Interpreter globals locals environment)]
     (doall (map #(stmt/accept % interpreter) stmts)))
   nil)
 
@@ -162,7 +173,10 @@
           []
           (/ (System/currentTimeMillis) 1000.0))
         {:arity 0}))
-    (->Interpreter environment environment)))
+    (map->Interpreter
+     {:globals environment
+      :locals (atom {})
+      :environment environment})))
 
 (def runtime-error?
   (atom false))
@@ -170,10 +184,12 @@
 (defn interpret
   [stmts]
   (let [interpreter (create-interpreter)]
-    (try
-      (doall (map #(stmt/accept % interpreter) (remove nil? stmts)))
-      (catch Exception error
-        (case (-> error ex-data :type)
-          ::runtime-error (do (println (str (.getMessage error) "\nat " (-> error ex-data :token :lexeme) " [line " (-> error ex-data :token :line) "]"))
-                              (reset! runtime-error? true))
-          (throw error))))))
+    (resolve-stmts interpreter stmts)
+    (when-not @error?
+      (try
+        (doall (map #(stmt/accept % interpreter) (remove nil? stmts)))
+        (catch Exception error
+          (case (-> error ex-data :type)
+            ::runtime-error (do (println (str (.getMessage error) "\nat " (-> error ex-data :token :lexeme) " [line " (-> error ex-data :token :line) "]"))
+                                (reset! runtime-error? true))
+            (throw error)))))))
