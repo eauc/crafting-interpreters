@@ -8,8 +8,10 @@
 (defprotocol StmtVisitor
   (visit-block-stmt [v s])
   (visit-expression-stmt [v s])
+  (visit-function-stmt [v s])
   (visit-if-stmt [v s])
   (visit-print-stmt [v s])
+  (visit-return-stmt [v s])
   (visit-var-stmt [v s])
   (visit-while-stmt [v s]))
 
@@ -21,6 +23,10 @@
   Stmt
   (accept [e ^StmtVisitor v] (visit-expression-stmt v e)))
 
+(defrecord FunctionStmt [^Token fun-name ^vector parameters ^vector body]
+  Stmt
+  (accept [e ^StmtVisitor v] (visit-function-stmt v e)))
+
 (defrecord IfStmt [^Expr condition ^Stmt then-branch ^Stmt else-branch]
   Stmt
   (accept [e ^StmtVisitor v] (visit-if-stmt v e)))
@@ -28,6 +34,10 @@
 (defrecord PrintStmt [^Expr expression]
   Stmt
   (accept [e ^StmtVisitor v] (visit-print-stmt v e)))
+
+(defrecord ReturnStmt [^Token keyword ^Expr value]
+  Stmt
+  (accept [e ^StmtVisitor v] (visit-return-stmt v e)))
 
 (defrecord VarStmt [^Token name ^Expr initializer]
   Stmt

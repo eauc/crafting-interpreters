@@ -49,13 +49,43 @@
                       {:expr (e/->GroupingExpr expr) :tokens tokens'}))
       (throw (parse-error "Expected expression." tokens)))))
 
+(defn finish-call
+  [{:keys [callee tokens]}]
+  (let [{args :args tokens' :tokens}
+        (if (= :right-paren (-> tokens first :type))
+          {:args [] :tokens tokens}
+          (loop [ts tokens
+                 args []]
+            (let [{arg :expr tokens' :tokens} (expression {:tokens ts})
+                  _ (when (>= (count args) 255)
+                      (parse-error "Can't have more than 255 arguments." tokens'))
+                  args' (conj args arg)]
+              (if-let [{tokens' :tokens} (match {:tokens tokens' :types #{:comma}})]
+                (recur tokens' args')
+                {:args args' :tokens tokens'}))))
+        {paren :token tokens' :tokens} (consume {:tokens tokens' :types #{:right-paren}
+                                                 :error-message "Expected ')' after arguments."})]
+    {:expr (e/->CallExpr callee paren args)
+     :tokens tokens'}))
+
+(defn call
+  [{:keys [tokens]}]
+  (let [{left :expr tokens' :tokens} (primary {:tokens tokens})]
+    (loop [ts tokens'
+           expr left]
+      (if-let [{tokens' :tokens} (match {:tokens ts :types #{:left-paren}})]
+        (let [{expr :expr tokens' :tokens} (finish-call {:callee expr :tokens tokens'})]
+          (recur tokens' expr))
+        {:expr expr
+         :tokens ts}))))
+
 (defn unary
   [{:keys [tokens]}]
   (if-let [{operator :token tokens' :tokens} (match {:tokens tokens :types #{:minus :bang}})]
     (let [{right :expr tokens' :tokens} (unary {:tokens tokens'})]
       {:expr (e/->UnaryExpr operator right)
        :tokens tokens'})
-    (primary {:tokens tokens})))
+    (call {:tokens tokens})))
 
 (defn factor
   [{:keys [tokens]}]
@@ -145,17 +175,7 @@
 
 (declare statement)
 (declare declaration)
-
-(defn while-statement
-  [{:keys [tokens]}]
-  (let [{tokens' :tokens} (consume {:tokens tokens :types #{:left-paren}
-                                    :error-message "Expected '(' after 'while'."})
-        {condition :expr tokens' :tokens} (expression {:tokens tokens'})
-        {tokens' :tokens} (consume {:tokens tokens' :types #{:right-paren}
-                                    :error-message "Expected ')' after condition."})
-        {body :stmt tokens' :tokens} (statement {:tokens tokens'})]
-    {:stmt (s/->WhileStmt condition body)
-     :tokens tokens'}))
+(declare var-declaration)
 
 (defn block
   [{:keys [tokens]}]
@@ -168,6 +188,27 @@
          :tokens tokens'})
       (let [{stmt :stmt tokens' :tokens} (declaration {:tokens tokens'})]
         (recur tokens' (conj stmts stmt))))))
+
+(defn while-statement
+  [{:keys [tokens]}]
+  (let [{tokens' :tokens} (consume {:tokens tokens :types #{:left-paren}
+                                    :error-message "Expected '(' after 'while'."})
+        {condition :expr tokens' :tokens} (expression {:tokens tokens'})
+        {tokens' :tokens} (consume {:tokens tokens' :types #{:right-paren}
+                                    :error-message "Expected ')' after condition."})
+        {body :stmt tokens' :tokens} (statement {:tokens tokens'})]
+    {:stmt (s/->WhileStmt condition body)
+     :tokens tokens'}))
+
+(defn return-statement
+  [{:keys [token tokens]}]
+  (let [{value :expr tokens' :tokens} (if (= :semicolon (-> tokens first :type))
+                                        {:expr nil :tokens tokens}
+                                        (expression {:tokens tokens}))
+        {tokens' :tokens} (consume {:tokens tokens' :types #{:semicolon}
+                                    :error-message "Expected ';' after return value."})]
+    {:stmt (s/->ReturnStmt token value)
+     :tokens tokens'}))
 
 (defn print-statement
   [{:keys [tokens]}]
@@ -191,8 +232,6 @@
          :tokens tokens'})
       {:stmt (s/->IfStmt condition then-branch nil)
        :tokens tokens'})))
-
-(declare var-declaration)
 
 (defn for-statement
   [{:keys [tokens]}]
@@ -228,13 +267,15 @@
       (if-statement {:tokens tokens'})
       (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:print}})]
         (print-statement {:tokens tokens'})
-        (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:while}})]
-          (while-statement {:tokens tokens'})
-          (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:left-brace}})]
-            (let [{stmts :stmts tokens' :tokens} (block {:tokens tokens'})]
-              {:stmt (s/->BlockStmt stmts)
-               :tokens tokens'})
-            (expression-statement {:tokens tokens})))))))
+        (if-let [{token :token tokens' :tokens} (match {:tokens tokens :types #{:return}})]
+          (return-statement {:token token :tokens tokens'})
+          (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:while}})]
+            (while-statement {:tokens tokens'})
+            (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:left-brace}})]
+              (let [{stmts :stmts tokens' :tokens} (block {:tokens tokens'})]
+                {:stmt (s/->BlockStmt stmts)
+                 :tokens tokens'})
+              (expression-statement {:tokens tokens}))))))))
 
 (defn var-declaration
   [{:keys [tokens]}]
@@ -248,12 +289,41 @@
     {:stmt (s/->VarStmt name initializer)
      :tokens tokens'}))
 
+(defn fun-declaration
+  [{:keys [kind tokens]}]
+  (let [{fun-name :token tokens' :tokens} (consume {:tokens tokens :types #{:identifier}
+                                                    :error-message (str "Expected " (name kind) " name.")})
+        {tokens' :tokens} (consume {:tokens tokens' :types #{:left-paren}
+                                    :error-message (str "Expected '(' after " (name kind) " name.")})
+        {params :params tokens' :tokens}
+        (if (= :right-paren (-> tokens' first :type))
+          {:params [] :tokens tokens'}
+          (loop [ts tokens'
+                 params []]
+            (let [_ (when (>= (count params) 255)
+                      (parse-error "Can't have more than 255 parameters" ts))
+                  {param :token tokens' :tokens} (consume {:tokens ts :types #{:identifier}
+                                                           :error-message "Expected parameter name."})
+                  params' (conj params param)]
+              (if-let [{tokens' :tokens} (match {:tokens tokens' :types #{:comma}})]
+                (recur tokens' params')
+                {:params params' :tokens tokens'}))))
+        {tokens' :tokens} (consume {:tokens tokens' :types #{:right-paren}
+                                    :error-message "Expected ')' after parameters."})
+        {tokens' :tokens} (consume {:tokens tokens' :types #{:left-brace}
+                                    :error-message (str "Expected '{' before " (name kind) " body.")})
+        {body :stmts tokens' :tokens} (block {:tokens tokens'})]
+    {:stmt (s/->FunctionStmt fun-name params body)
+     :tokens tokens'}))
+
 (defn declaration
   [{:keys [tokens]}]
   (try
-    (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:var}})]
-      (var-declaration {:tokens tokens'})
-      (statement {:tokens tokens}))
+    (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:fun}})]
+      (fun-declaration {:kind :function :tokens tokens'})
+      (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:var}})]
+        (var-declaration {:tokens tokens'})
+        (statement {:tokens tokens})))
     (catch Exception error
       (case (-> error ex-data :type)
         ::parse-error (synchronize {:tokens (-> error ex-data :tokens)})

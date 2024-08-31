@@ -25,7 +25,9 @@
   (when-not (and (double? left) (double? right))
     (throw (runtime-error operator "Operands must be number."))))
 
-(defrecord Interpreter [environment]
+(declare execute-block)
+
+(defrecord Interpreter [globals environment]
   expr/ExprVisitor
   (visit-assign-expr [i {:keys [name value]}]
     (let [value (expr/accept value i)]
@@ -66,6 +68,15 @@
         :equal-equal (= left-value right-value)
         :bang-equal (not= left-value right-value)
         nil)))
+  (visit-call-expr [i {:keys [callee paren arguments]}]
+    (let [function (expr/accept callee i)
+          _ (when-not (fn? function)
+              (throw (runtime-error paren "Can only call functions and classes.")))
+          {:keys [arity]} (meta function)
+          arg-values (doall (map #(expr/accept % i) arguments))
+          _ (when-not (= (count arg-values) arity)
+              (throw (runtime-error paren (str "Expected " arity " arguments but got " (count arg-values) "."))))]
+      (function i arg-values)))
   (visit-grouping-expr [i {:keys [expr]}]
     (expr/accept expr i))
   (visit-literal-expr [_ {:keys [value]}]
@@ -90,12 +101,26 @@
   (visit-variable-expr [_ {:keys [name]}]
     (env/get-var environment name))
   stmt/StmtVisitor
-  (visit-block-stmt [{:keys [environment]} {:keys [stmts]}]
-    (let [interpreter (->Interpreter (env/->Environment environment))]
-      (doall (map #(stmt/accept % interpreter) stmts)))
+  (visit-block-stmt [{:keys [environment] :as i} {:keys [stmts]}]
+    (execute-block i stmts (env/->Environment environment))
     nil)
   (visit-expression-stmt [i {:keys [expression]}]
     (expr/accept expression i)
+    nil)
+  (visit-function-stmt [{closure :environment} {:keys [fun-name parameters body]}]
+    (env/define-var!
+      environment (:lexeme fun-name)
+      (with-meta
+        (fn [i arg-values]
+          (let [environment (env/->Environment closure)]
+            (doall (map #(env/define-var! environment (:lexeme %1) %2) parameters arg-values))
+            (try
+              (execute-block i body environment)
+              (catch Exception error
+                (if (= ::return (-> error ex-data :type))
+                  (-> error ex-data :value)
+                  (throw error))))))
+        {:arity (count parameters)}))
     nil)
   (visit-if-stmt [i {:keys [condition then-branch else-branch]}]
     (if-let [_ (expr/accept condition i)]
@@ -107,6 +132,9 @@
     (let [value (expr/accept expression i)]
       (println (stringify value))
       nil))
+  (visit-return-stmt [i {:keys [value]}]
+    (let [v (if value (expr/accept value i) nil)]
+      (throw (ex-info "Return" {:type ::return :value v}))))
   (visit-var-stmt [i {:keys [name initializer]}]
     (let [value (when initializer (expr/accept initializer i))]
       (env/define-var! environment (:lexeme name) value)
@@ -117,12 +145,31 @@
         (recur (stmt/accept body i))
         nil))))
 
+(defn execute-block
+  [{:keys [globals]} stmts environment]
+  (let [interpreter (->Interpreter globals environment)]
+    (doall (map #(stmt/accept % interpreter) stmts)))
+  nil)
+
+(defn create-interpreter
+  []
+  (let [environment (env/->Environment)]
+    (env/define-var!
+      environment
+      "clock"
+      (with-meta
+        (fn clock-native-fn
+          []
+          (/ (System/currentTimeMillis) 1000.0))
+        {:arity 0}))
+    (->Interpreter environment environment)))
+
 (def runtime-error?
   (atom false))
 
 (defn interpret
   [stmts]
-  (let [interpreter (->Interpreter (env/->Environment))]
+  (let [interpreter (create-interpreter)]
     (try
       (doall (map #(stmt/accept % interpreter) (remove nil? stmts)))
       (catch Exception error
