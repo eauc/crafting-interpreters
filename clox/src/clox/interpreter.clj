@@ -70,6 +70,15 @@
     (expr/accept expr i))
   (visit-literal-expr [_ {:keys [value]}]
     value)
+  (visit-logical-expr [i {:keys [left operator right]}]
+    (let [left-value (expr/accept left i)]
+      (if (= :or (:type operator))
+        (if left-value
+          left-value
+          (expr/accept right i))
+        (if-not left-value
+          left-value
+          (expr/accept right i)))))
   (visit-unary-expr [i {:keys [operator right]}]
     (let [value (expr/accept right i)]
       (case (:type operator)
@@ -83,9 +92,16 @@
   stmt/StmtVisitor
   (visit-block-stmt [{:keys [environment]} {:keys [stmts]}]
     (let [interpreter (->Interpreter (env/->Environment environment))]
-      (doall (map #(stmt/accept % interpreter) stmts))))
+      (doall (map #(stmt/accept % interpreter) stmts)))
+    nil)
   (visit-expression-stmt [i {:keys [expression]}]
     (expr/accept expression i)
+    nil)
+  (visit-if-stmt [i {:keys [condition then-branch else-branch]}]
+    (if-let [_ (expr/accept condition i)]
+      (stmt/accept then-branch i)
+      (when else-branch
+        (stmt/accept else-branch i)))
     nil)
   (visit-print-stmt [i {:keys [expression]}]
     (let [value (expr/accept expression i)]
@@ -94,7 +110,12 @@
   (visit-var-stmt [i {:keys [name initializer]}]
     (let [value (when initializer (expr/accept initializer i))]
       (env/define-var! environment (:lexeme name) value)
-      nil)))
+      nil))
+  (visit-while-stmt [i {:keys [condition body]}]
+    (loop [_ nil]
+      (if (expr/accept condition i)
+        (recur (stmt/accept body i))
+        nil))))
 
 (def runtime-error?
   (atom false))

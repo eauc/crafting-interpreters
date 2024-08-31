@@ -1,10 +1,18 @@
-print "one";
+if (true or false)
+  print "one";
 var a = 1;
 {
   var b = 2;
   print a = 2;
   print a + b;
 }
-print a;
+if (false and true)
+  print b;
+else
+  print a;
+while (a < 10) {
+  a = a + 1;
+  print a;
+}
 -123 * (456.7) <= "toto";
 print 2 + 1;

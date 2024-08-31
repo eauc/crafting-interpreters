@@ -97,11 +97,31 @@
           (recur (e/->BinaryExpr expr operator right) tokens'))
         {:expr expr :tokens tokens'}))))
 
+(defn logic-and
+  [{:keys [tokens]}]
+  (let [{left :expr tokens' :tokens} (equality {:tokens tokens})]
+    (loop [ts tokens'
+           expr left]
+      (if-let [{tokens' :tokens operator :token} (match {:tokens ts :types #{:and}})]
+        (let [{right :expr tokens' :tokens} (equality {:tokens tokens'})]
+          (recur tokens' (e/->LogicalExpr expr operator right)))
+        {:expr expr
+         :tokens ts}))))
+
+(defn logic-or
+  [{:keys [tokens]}]
+  (let [{left :expr tokens' :tokens} (logic-and {:tokens tokens})]
+    (loop [ts tokens'
+           expr left]
+      (if-let [{tokens' :tokens operator :token} (match {:tokens ts :types #{:or}})]
+        (let [{right :expr tokens' :tokens} (logic-and {:tokens tokens'})]
+          (recur tokens' (e/->LogicalExpr expr operator right)))
+        {:expr expr
+         :tokens ts}))))
+
 (defn assignment
   [{:keys [tokens]}]
-  (when (empty? tokens)
-    (throw (ex-info "OOOOOPS" {})))
-  (let [{left :expr tokens' :tokens} (equality {:tokens tokens})]
+  (let [{left :expr tokens' :tokens} (logic-or {:tokens tokens})]
     (if-let [{tokens'' :tokens} (match {:tokens tokens' :types #{:equal}})]
       (let [{right :expr tokens'' :tokens} (assignment {:tokens tokens''})]
         (if (instance? e/VariableExpr left)
@@ -123,15 +143,19 @@
     {:stmt (s/->ExpressionStmt expr)
      :tokens tokens'}))
 
-(defn print-statement
-  [{:keys [tokens]}]
-  (let [{expr :expr tokens' :tokens} (expression {:tokens tokens})
-        {tokens' :tokens} (consume {:tokens tokens' :types #{:semicolon}
-                                    :error-message "Expected ';' after expression."})]
-    {:stmt (s/->PrintStmt expr)
-     :tokens tokens'}))
-
+(declare statement)
 (declare declaration)
+
+(defn while-statement
+  [{:keys [tokens]}]
+  (let [{tokens' :tokens} (consume {:tokens tokens :types #{:left-paren}
+                                    :error-message "Expected '(' after 'while'."})
+        {condition :expr tokens' :tokens} (expression {:tokens tokens'})
+        {tokens' :tokens} (consume {:tokens tokens' :types #{:right-paren}
+                                    :error-message "Expected ')' after condition."})
+        {body :stmt tokens' :tokens} (statement {:tokens tokens'})]
+    {:stmt (s/->WhileStmt condition body)
+     :tokens tokens'}))
 
 (defn block
   [{:keys [tokens]}]
@@ -145,15 +169,72 @@
       (let [{stmt :stmt tokens' :tokens} (declaration {:tokens tokens'})]
         (recur tokens' (conj stmts stmt))))))
 
+(defn print-statement
+  [{:keys [tokens]}]
+  (let [{expr :expr tokens' :tokens} (expression {:tokens tokens})
+        {tokens' :tokens} (consume {:tokens tokens' :types #{:semicolon}
+                                    :error-message "Expected ';' after expression."})]
+    {:stmt (s/->PrintStmt expr)
+     :tokens tokens'}))
+
+(defn if-statement
+  [{:keys [tokens]}]
+  (let [{tokens' :tokens} (consume {:tokens tokens :types #{:left-paren}
+                                    :error-message "Expected '(' after 'if'."})
+        {tokens' :tokens condition :expr} (expression {:tokens tokens'})
+        {tokens' :tokens} (consume {:tokens tokens' :types #{:right-paren}
+                                    :error-message "Expected ')' after condition."})
+        {tokens' :tokens then-branch :stmt} (statement {:tokens tokens'})]
+    (if-let [{tokens' :tokens} (match {:tokens tokens' :types #{:else}})]
+      (let [{tokens' :tokens else-branch :stmt} (statement {:tokens tokens'})]
+        {:stmt (s/->IfStmt condition then-branch else-branch)
+         :tokens tokens'})
+      {:stmt (s/->IfStmt condition then-branch nil)
+       :tokens tokens'})))
+
+(declare var-declaration)
+
+(defn for-statement
+  [{:keys [tokens]}]
+  (let [{tokens' :tokens} (consume {:tokens tokens :types #{:left-paren}
+                                    :error-message "Expected '(' after 'for'."})
+        {initializer :stmt tokens' :tokens} (if-let [{tokens' :tokens} (match {:tokens tokens' :types #{:semicolon}})]
+                                              {:stmt nil :tokens tokens'}
+                                              (if-let [{tokens' :tokens} (match {:tokens tokens' :types #{:var}})]
+                                                (var-declaration {:tokens tokens'})
+                                                (expression-statement {:tokens tokens'})))
+        {condition :expr tokens' :tokens} (if-not (= :semicolon (-> tokens' first :type))
+                                            (expression {:tokens tokens'})
+                                            {:expr (e/->LiteralExpr true) :tokens tokens'})
+        {tokens' :tokens} (consume {:tokens tokens' :types #{:semicolon}
+                                    :error-message "Expected ';' after condition."})
+        {increment :expr tokens' :tokens} (if-not (= :right-paren (-> tokens' first type))
+                                            (expression {:tokens tokens'})
+                                            {:expr nil :tokens tokens'})
+        {tokens' :tokens} (consume {:tokens tokens' :types #{:right-paren}
+                                    :error-message "Expected ')' after for clauses."})
+        {body :stmt tokens' :tokens} (statement {:tokens tokens'})
+        body' (if increment (s/->BlockStmt [body (s/->ExpressionStmt increment)]) body)
+        body' (s/->WhileStmt condition body')
+        body' (if initializer (s/->BlockStmt [initializer body']) body')]
+    {:stmt body'
+     :tokens tokens'}))
+
 (defn statement
   [{:keys [tokens]}]
-  (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:print}})]
-    (print-statement {:tokens tokens'})
-    (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:left-brace}})]
-      (let [{stmts :stmts tokens' :tokens} (block {:tokens tokens'})]
-        {:stmt (s/->BlockStmt stmts)
-         :tokens tokens'})
-      (expression-statement {:tokens tokens}))))
+  (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:for}})]
+    (for-statement {:tokens tokens'})
+    (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:if}})]
+      (if-statement {:tokens tokens'})
+      (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:print}})]
+        (print-statement {:tokens tokens'})
+        (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:while}})]
+          (while-statement {:tokens tokens'})
+          (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:left-brace}})]
+            (let [{stmts :stmts tokens' :tokens} (block {:tokens tokens'})]
+              {:stmt (s/->BlockStmt stmts)
+               :tokens tokens'})
+            (expression-statement {:tokens tokens})))))))
 
 (defn var-declaration
   [{:keys [tokens]}]
