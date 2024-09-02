@@ -1,0 +1,20 @@
+class Toto {
+  init() {
+    this.a = 0;
+    return;
+  }
+  speak() {
+    print this.a;
+  }
+  exec(a, b) {
+    return a + b;
+  }
+}
+var toto = Toto();
+toto.speak();
+toto.a = 1;
+toto.speak();
+print toto.init();
+toto.speak();
+print toto.exec(2, 3);
+print toto.nope;

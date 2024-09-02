@@ -1,6 +1,6 @@
 (ns clox.scanner
   (:require [clojure.string :refer [index-of]]
-            [clox.token :refer [->Token]]
+            [clox.token :refer [create-token]]
             [clox.report :refer [error]]))
 
 (def keywords
@@ -38,10 +38,10 @@
          line 1
          tokens []]
     (if (empty? source)
-      (conj tokens (->Token :eof nil nil line))
+      (conj tokens (create-token :eof nil nil line))
       (let [next-char (first source)
             leftover (subs source 1)
-            add-token (fn [type & [lexeme literal]] (conj tokens (->Token type (or lexeme next-char) literal line)))
+            add-token (fn [type & [lexeme literal]] (conj tokens (create-token type (or lexeme next-char) literal line)))
             match? #(if (empty? leftover) false (= %1 (first leftover)))]
         (case next-char
           \space (recur leftover line tokens)

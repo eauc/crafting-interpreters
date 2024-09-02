@@ -30,7 +30,7 @@
   Expr
   (accept [e ^ExprVisitor v] (visit-call-expr v e)))
 
-(defrecord GetExpr [^Expr object ^Token name]
+(defrecord GetExpr [^Expr object ^Token name-token]
   Expr
   (accept [e ^ExprVisitor v] (visit-get-expr v e)))
 
@@ -46,7 +46,7 @@
   Expr
   (accept [e ^ExprVisitor v] (visit-logical-expr v e)))
 
-(defrecord SetExpr [^Expr object ^Token name ^Expr value]
+(defrecord SetExpr [^Expr object ^Token name-token ^Expr value]
   Expr
   (accept [e ^ExprVisitor v] (visit-set-expr v e)))
 
@@ -54,7 +54,7 @@
   Expr
   (accept [e ^ExprVisitor v] (visit-super-expr v e)))
 
-(defrecord ThisExpr [^Token keyword]
+(defrecord ThisExpr [^Token keyword-token]
   Expr
   (accept [e ^ExprVisitor v] (visit-this-expr v e)))
 

@@ -7,6 +7,7 @@
 
 (defprotocol StmtVisitor
   (visit-block-stmt [v s])
+  (visit-class-stmt [v s])
   (visit-expression-stmt [v s])
   (visit-function-stmt [v s])
   (visit-if-stmt [v s])
@@ -18,6 +19,10 @@
 (defrecord BlockStmt [stmts]
   Stmt
   (accept [e ^StmtVisitor v] (visit-block-stmt v e)))
+
+(defrecord ClassStmt [^Token name-token method-stmts]
+  Stmt
+  (accept [e ^StmtVisitor v] (visit-class-stmt v e)))
 
 (defrecord ExpressionStmt [^Expr expression]
   Stmt

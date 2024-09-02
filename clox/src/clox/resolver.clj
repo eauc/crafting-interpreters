@@ -25,6 +25,7 @@
 (defn define!
   [scopes name-token]
   (when-let [scope (last scopes)]
+    ; (println "==def==" scopes name-token)
     (swap! scope assoc (:lexeme name-token) :defined)))
 
 (defn resolve-variable!
@@ -37,15 +38,17 @@
                       (map (fn [i scope] [i (get @scope (:lexeme name-token))]) (range))
                       (filter (fn [[_ state]] state))
                       first)]
-    (resolve-variable! interpreter expression (-> scopes count dec (- i)))))
+    ; (println "==res-loc==" scopes expression i)
+    (resolve-variable! interpreter expression i)))
 
 (defn resolve-function!
-  [r {:keys [params body]} fun-type]
-  (let [{:keys [scopes] :as r'} (begin-scope r fun-type)]
-    (doall (map #(define! scopes %) params))
+  [r {:keys [parameters body]} fun-type]
+  ; (println "==res-fun==" parameters body fun-type)
+  (let [{:keys [scopes] :as r'} (begin-scope r {:fun-type fun-type})]
+    (doall (map #(define! scopes %) parameters))
     (doall (map #(stmt/accept % r') body))))
 
-(defrecord Resolver [interpreter scopes current-function]
+(defrecord Resolver [interpreter scopes current-function current-class]
   expr/ExprVisitor
   (visit-assign-expr [r {:keys [name value] :as e}]
     (expr/accept value r)
@@ -56,13 +59,22 @@
   (visit-call-expr [r {:keys [callee arguments]}]
     (expr/accept callee r)
     (doall (map #(expr/accept % r) arguments)))
-  (visit-grouping-expr [r {:keys [expression]}]
-    (expr/accept expression r))
+  (visit-get-expr [r {:keys [object]}]
+    (expr/accept object r))
+  (visit-grouping-expr [r {:keys [expr]}]
+    (expr/accept expr r))
   (visit-literal-expr [_ _]
     nil)
   (visit-logical-expr [r {:keys [left right]}]
     (expr/accept left r)
     (expr/accept right r))
+  (visit-set-expr [r {:keys [object value]}]
+    (expr/accept object r)
+    (expr/accept value r))
+  (visit-this-expr [r {:keys [keyword-token] :as e}]
+    (when-not (= :class current-class)
+      (error {:message "Can't use 'this' outside of a class." :token keyword-token}))
+    (resolve-local! r e keyword-token))
   (visit-unary-expr [r {:keys [right]}]
     (expr/accept right r))
   (visit-variable-expr [r {:keys [name] :as e}]
@@ -73,7 +85,16 @@
   stmt/StmtVisitor
   (visit-block-stmt [r {:keys [stmts]}]
     (let [r' (begin-scope r)]
+      ; (println "==blk==" r')
       (doall (map #(stmt/accept % r') stmts))))
+  (visit-class-stmt [{:keys [scopes] :as r} {:keys [name-token method-stmts]}]
+    (define! scopes name-token)
+    (let [r' (begin-scope r {:class-type :class})]
+      (define! (:scopes r') {:lexeme "this"})
+      (doall
+       (map
+        #(resolve-function! r' % (if (= "init" (-> % :fun-name :lexeme)) :initializer :method))
+        method-stmts))))
   (visit-expression-stmt [r {:keys [expression]}]
     (expr/accept expression r))
   (visit-if-stmt [r {:keys [condition then-branch else-branch]}]
@@ -91,6 +112,9 @@
       (error {:message "Can't return from top-level code."
               :token keyword}))
     (when value
+      (when (= :initializer current-function)
+        (error {:message "Can't return a value from an initializer."
+                :token keyword}))
       (expr/accept value r)))
   (visit-var-stmt [{:keys [scopes] :as r} {:keys [name initializer]}]
     (declare! scopes name)
@@ -102,16 +126,24 @@
     (stmt/accept body r)))
 
 (defn begin-scope
-  ([{:keys [interpreter scopes]} fun-type]
-   (->Resolver interpreter (conj scopes (atom {})) fun-type))
-  ([{:keys [current-function] :as r}]
-   (begin-scope r current-function)))
+  ([{:keys [interpreter scopes current-class current-function]}
+    {:keys [fun-type class-type]
+     :or {fun-type current-function
+          class-type current-class}}]
+   ; (println "==beg-scp==" scopes fun-type)
+   (->Resolver interpreter (conj scopes (atom {})) fun-type class-type))
+  ([r]
+   (begin-scope r nil)))
 
 (defn create-resolver
   [interpreter]
-  (->Resolver interpreter [] :none))
+  (map->Resolver {:interpreter interpreter
+                  :scopes []
+                  :current-function :none
+                  :current-class :none}))
 
 (defn resolve-stmts
   [interpreter stmts]
   (let [resolver (create-resolver interpreter)]
+    ; (println "==res-stmts==" stmts)
     (doall (map #(stmt/accept % resolver) stmts))))

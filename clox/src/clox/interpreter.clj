@@ -8,10 +8,11 @@
 
 (defn stringify
   [value]
-  (cond
-    (nil? value) "nil"
-    (double? value) (replace (str value) #"\.0+$" "")
-    :else (str value)))
+  (or (-> value meta :to-string)
+      (cond
+        (nil? value) "nil"
+        (double? value) (replace (str value) #"\.0+$" "")
+        :else (str value))))
 
 (defn runtime-error
   [token message]
@@ -27,7 +28,74 @@
   (when-not (and (double? left) (double? right))
     (throw (runtime-error operator "Operands must be number."))))
 
+(declare bind-function)
+
+(defn get-class-field
+  [class-instance name-token]
+  (let [field-name (:lexeme name-token)]
+    (if-not (instance? clojure.lang.Atom (:fields class-instance))
+      (throw (runtime-error name-token "Only instances have properties."))
+      (let [{:keys [fields methods]} class-instance]
+        (cond
+          (contains? @fields field-name) (get @fields field-name)
+          (contains? methods field-name) (bind-function (get methods field-name) class-instance)
+          :else (throw (runtime-error name-token (str "Undefined property '" field-name "'."))))))))
+
+(defn set-class-field
+  [class-instance name-token value]
+  (let [field-name (:lexeme name-token)]
+    (if-not (instance? clojure.lang.Atom (:fields class-instance))
+      (throw (runtime-error name-token "Only instances have properties."))
+      (swap! (:fields class-instance) assoc field-name value))))
+
 (declare execute-block)
+
+(defn ->function
+  [{closure :environment} {:keys [fun-name parameters body] :as declaration} & {:keys [initializer?]}]
+  (with-meta
+    (fn [i arg-values]
+      (let [environment (env/->Environment closure)]
+        (doall (map #(env/define-var! environment (:lexeme %1) %2) parameters arg-values))
+        (try
+          (execute-block i body environment)
+          (when initializer? (env/get-var-at environment 1 "this"))
+          (catch Exception error
+            (if (= ::return (-> error ex-data :type))
+              (if initializer?
+                (env/get-var-at environment 1 "this")
+                (-> error ex-data :value))
+              (throw error))))))
+    {:to-string (:lexeme fun-name)
+     :closure closure
+     :declaration declaration
+     :initializer? initializer?
+     :arity (count parameters)}))
+
+(defn bind-function
+  [fun instance]
+  (let [{:keys [closure declaration initializer?]} (meta fun)
+        environment (env/->Environment closure)]
+    (env/define-var! environment "this" instance)
+    (->function {:environment environment} declaration {:initializer? initializer?})))
+
+(defn ->class
+  [i {:keys [name-token method-stmts]}]
+  (let [class-name (:lexeme name-token)
+        method-funs (->> method-stmts
+                         (map (fn [{:keys [fun-name] :as fun-stmt}]
+                                [(:lexeme fun-name) (->function i fun-stmt {:initializer? (= "init" (:lexeme fun-name))})]))
+                         (into {}))
+        {:strs [init]} method-funs]
+    (with-meta
+      (fn [interpreter arg-values]
+        (let [instance (with-meta
+                         {:fields (atom {})
+                          :methods method-funs}
+                         {:to-string (str class-name " instance")})]
+          (when init ((bind-function init instance) interpreter arg-values))
+          instance))
+      {:to-string class-name
+       :arity (or (-> init meta :arity) 0)})))
 
 (defn lookup-variable
   [{:keys [environment locals globals]} expr name-token]
@@ -88,6 +156,9 @@
           _ (when-not (= (count arg-values) arity)
               (throw (runtime-error paren (str "Expected " arity " arguments but got " (count arg-values) "."))))]
       (function i arg-values)))
+  (visit-get-expr [i {:keys [object name-token]}]
+    (let [object-value (expr/accept object i)]
+      (get-class-field object-value name-token)))
   (visit-grouping-expr [i {:keys [expr]}]
     (expr/accept expr i))
   (visit-literal-expr [_ {:keys [value]}]
@@ -101,6 +172,11 @@
         (if-not left-value
           left-value
           (expr/accept right i)))))
+  (visit-set-expr [i {:keys [object name-token value]}]
+    (let [object-value (expr/accept object i)]
+      (set-class-field object-value name-token (expr/accept value i))))
+  (visit-this-expr [i {:keys [keyword-token] :as e}]
+    (lookup-variable i e keyword-token))
   (visit-unary-expr [i {:keys [operator right]}]
     (let [value (expr/accept right i)]
       (case (:type operator)
@@ -115,23 +191,17 @@
   (visit-block-stmt [{:keys [environment] :as i} {:keys [stmts]}]
     (execute-block i stmts (env/->Environment environment))
     nil)
+  (visit-class-stmt [{:keys [environment] :as i} {:keys [name-token] :as e}]
+    (env/define-var! environment (:lexeme name-token) nil)
+    (env/assign-var! environment name-token (->class i e))
+    nil)
   (visit-expression-stmt [i {:keys [expression]}]
     (expr/accept expression i)
     nil)
-  (visit-function-stmt [{closure :environment} {:keys [fun-name parameters body]}]
+  (visit-function-stmt [i {:keys [fun-name] :as fun-stmt}]
     (env/define-var!
       environment (:lexeme fun-name)
-      (with-meta
-        (fn [i arg-values]
-          (let [environment (env/->Environment closure)]
-            (doall (map #(env/define-var! environment (:lexeme %1) %2) parameters arg-values))
-            (try
-              (execute-block i body environment)
-              (catch Exception error
-                (if (= ::return (-> error ex-data :type))
-                  (-> error ex-data :value)
-                  (throw error))))))
-        {:arity (count parameters)}))
+      (->function i fun-stmt))
     nil)
   (visit-if-stmt [i {:keys [condition then-branch else-branch]}]
     (if-let [_ (expr/accept condition i)]
@@ -182,9 +252,13 @@
   (atom false))
 
 (defn interpret
-  [stmts]
-  (let [interpreter (create-interpreter)]
-    (resolve-stmts interpreter stmts)
+  [stmts']
+  (let [stmts (remove nil? stmts')
+        interpreter (create-interpreter)]
+    (when-not @error?
+      (resolve-stmts interpreter stmts))
+      ; (println "==stmts==" stmts)
+      ; (println "==intr==" interpreter)
     (when-not @error?
       (try
         (doall (map #(stmt/accept % interpreter) (remove nil? stmts)))

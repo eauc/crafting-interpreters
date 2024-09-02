@@ -1,14 +1,14 @@
 (ns clox.parser
   (:require [clox.expression :as e]
-            [clox.report :refer [report]]
+            [clox.report :refer [error]]
             [clox.statement :as s]))
 
 (defn parse-error
   [message tokens]
   (let [[{token-type :type line :line lexeme :lexeme}] tokens]
     (if (= token-type :eof)
-      (report {:line line :where " at end" :message message})
-      (report {:line line :where (str " at '" lexeme "'") :message message})))
+      (error {:line line :where " at end" :message message})
+      (error {:line line :where (str " at '" lexeme "'") :message message})))
   (ex-info message {:type ::parse-error :tokens tokens}))
 
 (defn synchronize
@@ -43,6 +43,7 @@
       :number {:expr (e/->LiteralExpr literal) :tokens tokens'}
       :string {:expr (e/->LiteralExpr literal) :tokens tokens'}
       :identifier {:expr (e/->VariableExpr token) :tokens tokens'}
+      :this {:expr (e/->ThisExpr token) :tokens tokens'}
       :left-paren (let [{expr :expr tokens' :tokens} (expression {:tokens tokens'})]
                     (when-let [{tokens' :tokens} (consume {:tokens tokens' :types #{:right-paren}
                                                            :error-message "Expected ')' after expression."})]
@@ -76,8 +77,12 @@
       (if-let [{tokens' :tokens} (match {:tokens ts :types #{:left-paren}})]
         (let [{expr :expr tokens' :tokens} (finish-call {:callee expr :tokens tokens'})]
           (recur tokens' expr))
-        {:expr expr
-         :tokens ts}))))
+        (if-let [{tokens' :tokens} (match {:tokens ts :types #{:dot}})]
+          (let [{name-token :token tokens' :tokens} (consume {:tokens tokens' :types #{:identifier}
+                                                              :error-message "Expected property name after '.'."})]
+            (recur tokens' (e/->GetExpr expr name-token)))
+          {:expr expr
+           :tokens ts})))))
 
 (defn unary
   [{:keys [tokens]}]
@@ -154,10 +159,12 @@
   (let [{left :expr tokens' :tokens} (logic-or {:tokens tokens})]
     (if-let [{tokens'' :tokens} (match {:tokens tokens' :types #{:equal}})]
       (let [{right :expr tokens'' :tokens} (assignment {:tokens tokens''})]
-        (if (instance? e/VariableExpr left)
-          {:expr (e/->AssignExpr (:name left) right)
-           :tokens tokens''}
-          (throw (parse-error "Invalid assignment target." tokens''))))
+        (cond
+          (instance? e/VariableExpr left) {:expr (e/->AssignExpr (:name left) right)
+                                           :tokens tokens''}
+          (instance? e/GetExpr left) {:expr (e/->SetExpr (:object left) (:name-token left) right)
+                                      :tokens tokens''}
+          :else (throw (parse-error "Invalid assignment target." tokens''))))
       {:expr left
        :tokens tokens'})))
 
@@ -316,14 +323,35 @@
     {:stmt (s/->FunctionStmt fun-name params body)
      :tokens tokens'}))
 
+(defn class-declaration
+  [{:keys [tokens]}]
+  (let [{name-token :token tokens' :tokens} (consume {:tokens tokens :types #{:identifier}
+                                                      :error-message "Expected class name."})
+        {tokens' :tokens} (consume {:tokens tokens' :types #{:left-brace}
+                                    :error-message "Expected '{' after class name."})
+        {method-stmts :methods tokens' :tokens}
+        (loop [ts tokens'
+               methods []]
+          (if (or (= :right-brace (-> ts first :type))
+                  (empty? tokens'))
+            {:methods methods :tokens ts}
+            (let [{method :stmt tokens' :tokens} (fun-declaration {:tokens ts :kind :method})]
+              (recur tokens' (conj methods method)))))
+        {tokens' :tokens} (consume {:tokens tokens' :types #{:right-brace}
+                                    :error-message "Expected '}' after class body."})]
+    {:stmt (s/->ClassStmt name-token method-stmts)
+     :tokens tokens'}))
+
 (defn declaration
   [{:keys [tokens]}]
   (try
-    (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:fun}})]
-      (fun-declaration {:kind :function :tokens tokens'})
-      (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:var}})]
-        (var-declaration {:tokens tokens'})
-        (statement {:tokens tokens})))
+    (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:class}})]
+      (class-declaration {:tokens tokens'})
+      (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:fun}})]
+        (fun-declaration {:kind :function :tokens tokens'})
+        (if-let [{tokens' :tokens} (match {:tokens tokens :types #{:var}})]
+          (var-declaration {:tokens tokens'})
+          (statement {:tokens tokens}))))
     (catch Exception error
       (case (-> error ex-data :type)
         ::parse-error (synchronize {:tokens (-> error ex-data :tokens)})
