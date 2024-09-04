@@ -6,15 +6,20 @@ class Toto {
   speak() {
     print this.a;
   }
+}
+class Titi < Toto {
+  init() {
+    super.init();
+  }
   exec(a, b) {
+    super.speak();
     return a + b;
   }
 }
-var toto = Toto();
-toto.speak();
-toto.a = 1;
-toto.speak();
-print toto.init();
-toto.speak();
-print toto.exec(2, 3);
-print toto.nope;
+var titi = Titi();
+titi.speak();
+titi.a = 1;
+titi.speak();
+print titi.init();
+print titi.exec(2, 3);
+print titi.nope;

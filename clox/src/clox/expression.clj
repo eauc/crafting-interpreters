@@ -50,7 +50,7 @@
   Expr
   (accept [e ^ExprVisitor v] (visit-set-expr v e)))
 
-(defrecord SuperExpr [^Token keyword ^Token method]
+(defrecord SuperExpr [^Token keyword-token ^Token method-token]
   Expr
   (accept [e ^ExprVisitor v] (visit-super-expr v e)))
 

@@ -30,15 +30,20 @@
 
 (declare bind-function)
 
+(defn get-class-method
+  [{:keys [methods super]} field-name]
+  (or (get methods field-name)
+      (and super (get-class-method super field-name))))
+
 (defn get-class-field
   [class-instance name-token]
   (let [field-name (:lexeme name-token)]
     (if-not (instance? clojure.lang.Atom (:fields class-instance))
       (throw (runtime-error name-token "Only instances have properties."))
-      (let [{:keys [fields methods]} class-instance]
+      (let [{:keys [fields class]} class-instance]
         (cond
           (contains? @fields field-name) (get @fields field-name)
-          (contains? methods field-name) (bind-function (get methods field-name) class-instance)
+          (get-class-method class field-name) (bind-function (get-class-method class field-name) class-instance)
           :else (throw (runtime-error name-token (str "Undefined property '" field-name "'."))))))))
 
 (defn set-class-field
@@ -65,7 +70,8 @@
                 (env/get-var-at environment 1 "this")
                 (-> error ex-data :value))
               (throw error))))))
-    {:to-string (:lexeme fun-name)
+    {:function? true
+     :to-string (:lexeme fun-name)
      :closure closure
      :declaration declaration
      :initializer? initializer?
@@ -79,23 +85,35 @@
     (->function {:environment environment} declaration {:initializer? initializer?})))
 
 (defn ->class
-  [i {:keys [name-token method-stmts]}]
+  [i {:keys [name-token superclass method-stmts]}]
   (let [class-name (:lexeme name-token)
+        super (when superclass (expr/accept superclass i))
+        i' (if superclass
+             (assoc i :environment (doto (env/->Environment (:environment i))
+                                     (env/define-var! "super" super)))
+             i)
         method-funs (->> method-stmts
                          (map (fn [{:keys [fun-name] :as fun-stmt}]
-                                [(:lexeme fun-name) (->function i fun-stmt {:initializer? (= "init" (:lexeme fun-name))})]))
+                                [(:lexeme fun-name) (->function i' fun-stmt {:initializer? (= "init" (:lexeme fun-name))})]))
                          (into {}))
-        {:strs [init]} method-funs]
+        {:strs [init]} method-funs
+        class-meta {:class? true
+                    :to-string class-name
+                    :methods method-funs
+                    :super (meta super)
+                    :arity (or (-> init meta :arity) 0)}]
+    (when (and superclass (not (-> super meta :class?)))
+      (throw (runtime-error (:name superclass) "Superclass must be a class.")))
     (with-meta
       (fn [interpreter arg-values]
         (let [instance (with-meta
                          {:fields (atom {})
-                          :methods method-funs}
-                         {:to-string (str class-name " instance")})]
+                          :class class-meta}
+                         {:instance? true
+                          :to-string (str class-name " instance")})]
           (when init ((bind-function init instance) interpreter arg-values))
           instance))
-      {:to-string class-name
-       :arity (or (-> init meta :arity) 0)})))
+      class-meta)))
 
 (defn lookup-variable
   [{:keys [environment locals globals]} expr name-token]
@@ -175,6 +193,15 @@
   (visit-set-expr [i {:keys [object name-token value]}]
     (let [object-value (expr/accept object i)]
       (set-class-field object-value name-token (expr/accept value i))))
+  (visit-super-expr [_ {:keys [method-token] :as e}]
+    (let [depth (get @locals e)
+          super (env/get-var-at environment depth "super")
+          instance (env/get-var-at environment (dec depth) "this")
+          method-name (:lexeme method-token)
+          method (-> super meta :methods (get method-name))]
+      (when-not method
+        (throw (runtime-error method-token (str "Undefined property '" method-name "'."))))
+      (bind-function method instance)))
   (visit-this-expr [i {:keys [keyword-token] :as e}]
     (lookup-variable i e keyword-token))
   (visit-unary-expr [i {:keys [operator right]}]

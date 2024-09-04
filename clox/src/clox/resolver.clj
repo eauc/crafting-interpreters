@@ -71,6 +71,12 @@
   (visit-set-expr [r {:keys [object value]}]
     (expr/accept object r)
     (expr/accept value r))
+  (visit-super-expr [r {:keys [keyword-token] :as e}]
+    (when (= :none current-class)
+      (error {:message "Can't use 'super' outside of class." :token keyword-token}))
+    (when-not (= :subclass current-class)
+      (error {:message "Can't use 'super' in a class with no superclass." :token keyword-token}))
+    (resolve-local! r e keyword-token))
   (visit-this-expr [r {:keys [keyword-token] :as e}]
     (when-not (= :class current-class)
       (error {:message "Can't use 'this' outside of a class." :token keyword-token}))
@@ -87,9 +93,18 @@
     (let [r' (begin-scope r)]
       ; (println "==blk==" r')
       (doall (map #(stmt/accept % r') stmts))))
-  (visit-class-stmt [{:keys [scopes] :as r} {:keys [name-token method-stmts]}]
+  (visit-class-stmt [{:keys [scopes] :as r} {:keys [name-token superclass method-stmts]}]
     (define! scopes name-token)
-    (let [r' (begin-scope r {:class-type :class})]
+    (when superclass
+      (when (= (:lexeme name-token) (:lexeme (:name superclass)))
+        (error {:message "A class can't inherit from itself." :token (:name superclass)}))
+      (expr/accept superclass r))
+    (let [r' (if superclass
+               (let [{:keys [scopes] :as r'} (begin-scope r)]
+                 (define! scopes {:lexeme "super"})
+                 r')
+               r)
+          r' (begin-scope r' {:class-type (if superclass :subclass :class)})]
       (define! (:scopes r') {:lexeme "this"})
       (doall
        (map

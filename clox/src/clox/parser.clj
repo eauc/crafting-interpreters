@@ -43,6 +43,11 @@
       :number {:expr (e/->LiteralExpr literal) :tokens tokens'}
       :string {:expr (e/->LiteralExpr literal) :tokens tokens'}
       :identifier {:expr (e/->VariableExpr token) :tokens tokens'}
+      :super (let [{tokens' :tokens} (consume {:tokens tokens' :types #{:dot}
+                                               :error-message "Expected a '.' after 'super'."})
+                   {method-token :token tokens' :tokens} (consume {:tokens tokens' :types #{:identifier}
+                                                                   :error-message "Expected superclass method name."})]
+               {:expr (e/->SuperExpr token method-token) :tokens tokens'})
       :this {:expr (e/->ThisExpr token) :tokens tokens'}
       :left-paren (let [{expr :expr tokens' :tokens} (expression {:tokens tokens'})]
                     (when-let [{tokens' :tokens} (consume {:tokens tokens' :types #{:right-paren}
@@ -327,6 +332,11 @@
   [{:keys [tokens]}]
   (let [{name-token :token tokens' :tokens} (consume {:tokens tokens :types #{:identifier}
                                                       :error-message "Expected class name."})
+        {superclass :expr tokens' :tokens} (if-let [{tokens' :tokens} (match {:tokens tokens' :types #{:less}})]
+                                             (let [{token :token tokens' :tokens} (consume {:tokens tokens' :types #{:identifier}
+                                                                                            :error-message "Expected superclass name."})]
+                                               {:expr (e/->VariableExpr token) :tokens tokens'})
+                                             {:tokens tokens'})
         {tokens' :tokens} (consume {:tokens tokens' :types #{:left-brace}
                                     :error-message "Expected '{' after class name."})
         {method-stmts :methods tokens' :tokens}
@@ -339,7 +349,7 @@
               (recur tokens' (conj methods method)))))
         {tokens' :tokens} (consume {:tokens tokens' :types #{:right-brace}
                                     :error-message "Expected '}' after class body."})]
-    {:stmt (s/->ClassStmt name-token method-stmts)
+    {:stmt (s/->ClassStmt name-token superclass method-stmts)
      :tokens tokens'}))
 
 (defn declaration

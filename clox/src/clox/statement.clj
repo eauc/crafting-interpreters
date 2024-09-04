@@ -20,7 +20,7 @@
   Stmt
   (accept [e ^StmtVisitor v] (visit-block-stmt v e)))
 
-(defrecord ClassStmt [^Token name-token method-stmts]
+(defrecord ClassStmt [^Token name-token superclass method-stmts]
   Stmt
   (accept [e ^StmtVisitor v] (visit-class-stmt v e)))
 
