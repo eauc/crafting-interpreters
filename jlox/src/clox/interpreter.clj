@@ -267,7 +267,7 @@
       "clock"
       (with-meta
         (fn clock-native-fn
-          []
+          [_ _]
           (/ (System/currentTimeMillis) 1000.0))
         {:arity 0}))
     (map->Interpreter
