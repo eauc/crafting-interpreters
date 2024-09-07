@@ -3,11 +3,16 @@ const mem = @import("memory.zig");
 const val = @import("value.zig");
 
 pub const Instruction = enum(u8) {
-    OP_RETURN,
     OP_CONSTANT,
+    OP_NEGATE,
+    OP_ADD,
+    OP_SUBTRACT,
+    OP_MULTIPLY,
+    OP_DIVIDE,
+    OP_RETURN,
 };
 
-const OpCode = union(enum) {
+pub const OpCode = union(enum) {
     instruction: Instruction,
     constant: u8,
 };

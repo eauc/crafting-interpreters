@@ -2,15 +2,25 @@ const std = @import("std");
 const chk = @import("chunk.zig");
 const val = @import("value.zig");
 
-pub fn disassembleChunk(chunk: chk.Chunk, name: []const u8) void {
-    std.debug.print("=={s}==\n", .{name});
-    var offset: usize = 0;
-    while (offset < chunk.count) {
-        offset = disassembleInstruction(chunk, offset);
+const TRACE_EXECUTION = true;
+
+pub fn traceExecution(comptime format: []const u8, args: anytype) void {
+    if (TRACE_EXECUTION) {
+        std.debug.print(format, args);
     }
 }
 
-fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
+pub fn disassembleChunk(chunk: chk.Chunk, name: []const u8) void {
+    if (TRACE_EXECUTION) {
+        std.debug.print("=={s}==\n", .{name});
+        var offset: usize = 0;
+        while (offset < chunk.count) {
+            offset = disassembleInstruction(chunk, offset);
+        }
+    }
+}
+
+pub fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
     std.debug.print("{d:0>4} ", .{offset});
     if (offset > 0 and chunk.lines[offset] == chunk.lines[offset - 1]) {
         std.debug.print("   | ", .{});
@@ -18,11 +28,26 @@ fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
         std.debug.print("{d:4} ", .{chunk.lines[offset]});
     }
     switch (chunk.code[offset].instruction) {
-        .OP_RETURN => {
-            return simpleInstruction("OP_RETURN", offset);
-        },
         .OP_CONSTANT => {
             return constantInstruction("OP_CONSTANT", chunk, offset);
+        },
+        .OP_NEGATE => {
+            return simpleInstruction("OP_NEGATE", offset);
+        },
+        .OP_ADD => {
+            return simpleInstruction("OP_ADD", offset);
+        },
+        .OP_SUBTRACT => {
+            return simpleInstruction("OP_SUBTRACT", offset);
+        },
+        .OP_MULTIPLY => {
+            return simpleInstruction("OP_MULTIPLY", offset);
+        },
+        .OP_DIVIDE => {
+            return simpleInstruction("OP_DIVIDE", offset);
+        },
+        .OP_RETURN => {
+            return simpleInstruction("OP_RETURN", offset);
         },
     }
 }
