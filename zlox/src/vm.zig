@@ -1,5 +1,6 @@
 const std = @import("std");
 const chk = @import("chunk.zig");
+const cmp = @import("compiler.zig");
 const dbg = @import("debug.zig");
 const val = @import("value.zig");
 
@@ -45,10 +46,9 @@ pub const VM = struct {
         .ip = undefined,
         .stack = Stack.default,
     };
-    pub fn interpret(self: *VM, chunk: *const chk.Chunk) InterpretError!void {
-        self.chunk = chunk;
-        self.ip = chunk.code.ptr;
-        try self.run();
+    pub fn interpret(self: *VM, source: []const u8) InterpretError!void {
+        _ = self;
+        cmp.compile(source);
     }
     pub fn run(self: *VM) InterpretError!void {
         while (true) {

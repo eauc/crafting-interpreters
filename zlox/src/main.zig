@@ -9,25 +9,39 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     var vm = VM.default;
-    var chunk = chk.Chunk.default;
-    chunk.init(allocator);
-    var constant = try chunk.addConstant(1.2);
-    try chunk.write(.{ .instruction = chk.Instruction.OP_CONSTANT }, 123);
-    try chunk.write(.{ .constant = constant }, 123);
+    const args = try std.process.argsAlloc(allocator);
+    if (args.len == 1) {
+        try repl(&vm);
+    } else if (args.len == 2) {
+        try runFile(&vm, args[1], allocator);
+    } else {
+        std.debug.print("Usage: zlox [path]\n", .{});
+    }
+}
 
-    constant = try chunk.addConstant(3.4);
-    try chunk.write(.{ .instruction = chk.Instruction.OP_CONSTANT }, 123);
-    try chunk.write(.{ .constant = constant }, 123);
+fn repl(vm: *VM) !void {
+    var line: [1024]u8 = .{0} ** 1024;
+    var stdin = std.io.getStdIn().reader();
+    var stdout = std.io.getStdOut().writer();
+    while (true) {
+        try stdout.print("> ", .{});
+        _ = try stdin.readUntilDelimiterOrEof(&line, '\n');
+        if (line.len == 0) {
+            try stdout.print("\n", .{});
+            break;
+        }
+        try vm.interpret(&line);
+    }
+}
 
-    try chunk.write(.{ .instruction = chk.Instruction.OP_ADD }, 123);
+fn runFile(vm: *VM, filePath: []const u8, allocator: std.mem.Allocator) !void {
+    const source = try readFile(filePath, allocator);
+    try vm.interpret(source);
+}
 
-    constant = try chunk.addConstant(5.6);
-    try chunk.write(.{ .instruction = chk.Instruction.OP_CONSTANT }, 123);
-    try chunk.write(.{ .constant = constant }, 123);
-
-    try chunk.write(.{ .instruction = chk.Instruction.OP_DIVIDE }, 123);
-    try chunk.write(.{ .instruction = chk.Instruction.OP_NEGATE }, 123);
-    try chunk.write(.{ .instruction = chk.Instruction.OP_RETURN }, 123);
-
-    try vm.interpret(&chunk);
+fn readFile(filePath: []const u8, allocator: std.mem.Allocator) ![]const u8 {
+    const cwd: std.fs.Dir = std.fs.cwd();
+    var file: std.fs.File = try cwd.openFile(filePath, .{});
+    defer file.close();
+    return file.readToEndAlloc(allocator, std.math.maxInt(usize));
 }
