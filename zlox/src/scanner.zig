@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub const TokenType = enum(u8) {
     // Single-character tokens.
-    TOKEN_LEFT_PAREN,
+    TOKEN_LEFT_PAREN = 0,
     TOKEN_RIGHT_PAREN,
     TOKEN_LEFT_BRACE,
     TOKEN_RIGHT_BRACE,
@@ -43,9 +43,9 @@ pub const TokenType = enum(u8) {
     TOKEN_TRUE,
     TOKEN_VAR,
     TOKEN_WHILE,
-
     TOKEN_ERROR,
     TOKEN_EOF,
+    max_value,
 };
 
 pub const Token = struct {
@@ -139,7 +139,7 @@ pub const Scanner = struct {
         }
     }
     fn isAtEnd(self: *Scanner) bool {
-        return self.current.len == 0;
+        return self.current[0] == 0;
     }
     fn peek(self: *Scanner) u8 {
         if (self.isAtEnd()) return 0;

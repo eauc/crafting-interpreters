@@ -11,7 +11,7 @@ pub fn main() !void {
     var vm = VM.default;
     const args = try std.process.argsAlloc(allocator);
     if (args.len == 1) {
-        try repl(&vm);
+        try repl(&vm, allocator);
     } else if (args.len == 2) {
         try runFile(&vm, args[1], allocator);
     } else {
@@ -19,7 +19,7 @@ pub fn main() !void {
     }
 }
 
-fn repl(vm: *VM) !void {
+fn repl(vm: *VM, allocator: std.mem.Allocator) !void {
     var line: [1024]u8 = .{0} ** 1024;
     var stdin = std.io.getStdIn().reader();
     var stdout = std.io.getStdOut().writer();
@@ -30,13 +30,13 @@ fn repl(vm: *VM) !void {
             try stdout.print("\n", .{});
             break;
         }
-        try vm.interpret(&line);
+        try vm.interpret(&line, allocator);
     }
 }
 
 fn runFile(vm: *VM, filePath: []const u8, allocator: std.mem.Allocator) !void {
     const source = try readFile(filePath, allocator);
-    try vm.interpret(source);
+    try vm.interpret(source, allocator);
 }
 
 fn readFile(filePath: []const u8, allocator: std.mem.Allocator) ![]const u8 {

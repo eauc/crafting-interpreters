@@ -2,6 +2,7 @@ const std = @import("std");
 const chk = @import("chunk.zig");
 const val = @import("value.zig");
 
+pub const PRINT_CODE = true;
 const TRACE_EXECUTION = true;
 
 pub fn traceExecution(comptime format: []const u8, args: anytype) void {

@@ -9,7 +9,7 @@ pub fn printValue(value: Value) void {
 
 pub const ValueArray = struct {
     allocator: std.mem.Allocator,
-    count: u8,
+    count: usize,
     values: []Value,
     pub const default: ValueArray = .{
         .allocator = undefined,

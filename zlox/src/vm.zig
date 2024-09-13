@@ -46,9 +46,18 @@ pub const VM = struct {
         .ip = undefined,
         .stack = Stack.default,
     };
-    pub fn interpret(self: *VM, source: []const u8) InterpretError!void {
-        _ = self;
-        cmp.compile(source);
+    pub fn interpret(self: *VM, source: []const u8, allocator: std.mem.Allocator) InterpretError!void {
+        var chunk = chk.Chunk.default;
+        chunk.init(allocator);
+        cmp.compile(source, &chunk) catch {
+            chunk.free();
+            return InterpretError.CompileError;
+        };
+        defer chunk.free();
+
+        self.chunk = &chunk;
+        self.ip = chunk.code.ptr;
+        try self.run();
     }
     pub fn run(self: *VM) InterpretError!void {
         while (true) {

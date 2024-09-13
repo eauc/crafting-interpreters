@@ -21,20 +21,20 @@ pub const Chunk = struct {
     allocator: std.mem.Allocator,
     count: usize,
     code: []OpCode,
-    lines: []usize,
+    lines: []isize,
     constants: val.ValueArray,
     pub const default: Chunk = .{
         .allocator = undefined,
         .count = 0,
         .code = &[_]OpCode{},
-        .lines = &[_]usize{},
+        .lines = &[_]isize{},
         .constants = val.ValueArray.default,
     };
     pub fn init(self: *Chunk, allocator: std.mem.Allocator) void {
         self.allocator = allocator;
         self.count = 0;
         self.code = &[_]OpCode{};
-        self.lines = &[_]usize{};
+        self.lines = &[_]isize{};
         self.constants.init(allocator);
     }
     pub fn free(self: *Chunk) void {
@@ -43,18 +43,18 @@ pub const Chunk = struct {
         self.allocator.free(self.lines);
         self.init(self.allocator);
     }
-    pub fn write(self: *Chunk, opCode: OpCode, line: usize) !void {
+    pub fn write(self: *Chunk, opCode: OpCode, line: isize) !void {
         if (self.code.len < self.count + 1) {
             const oldCapacity = self.code.len;
             const newCapacity = mem.growCapacity(oldCapacity);
             self.code = try mem.growArray(OpCode, self.code, oldCapacity, newCapacity, self.allocator);
-            self.lines = try mem.growArray(usize, self.lines, oldCapacity, newCapacity, self.allocator);
+            self.lines = try mem.growArray(isize, self.lines, oldCapacity, newCapacity, self.allocator);
         }
         self.code[self.count] = opCode;
         self.lines[self.count] = line;
         self.count += 1;
     }
-    pub fn addConstant(self: *Chunk, value: val.Value) !u8 {
+    pub fn addConstant(self: *Chunk, value: val.Value) !usize {
         try self.constants.write(value);
         return self.constants.count - 1;
     }
