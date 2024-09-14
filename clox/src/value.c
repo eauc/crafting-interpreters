@@ -1,7 +1,23 @@
-#include <stdio.h>
-#include <stdlib.h>
 #include "value.h"
 #include "memory.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+bool valuesEqual(Value a, Value b) {
+  if (a.type != b.type) {
+    return false;
+  }
+  switch (a.type) {
+  case VAL_BOOL:
+    return AS_BOOL(a) == AS_BOOL(b);
+  case VAL_NIL:
+    return true;
+  case VAL_NUMBER:
+    return AS_NUMBER(a) == AS_NUMBER(b);
+  default:
+    return false;
+  }
+}
 
 void initValueArray(ValueArray *valueArray) {
   valueArray->count = 0;
@@ -18,12 +34,26 @@ void writeValueArray(ValueArray *valueArray, Value value) {
   if (valueArray->capacity < valueArray->count + 1) {
     int oldCapacity = valueArray->capacity;
     valueArray->capacity = GROW_CAPACITY(valueArray->capacity);
-    valueArray->values = GROW_ARRAY(Value, valueArray->values, oldCapacity, valueArray->capacity);
+    valueArray->values = GROW_ARRAY(Value, valueArray->values, oldCapacity,
+                                    valueArray->capacity);
   }
   valueArray->values[valueArray->count] = value;
   valueArray->count++;
 }
 
 void printValue(Value value) {
-  printf("%g", value);
+  switch (value.type) {
+  case VAL_BOOL: {
+    printf(AS_BOOL(value) ? "true" : "false");
+    break;
+  }
+  case VAL_NIL: {
+    printf("nil");
+    break;
+  }
+  case VAL_NUMBER: {
+    printf("%g", AS_NUMBER(value));
+    break;
+  }
+  }
 }

@@ -8,7 +8,7 @@ static void repl(void) {
   for(;;) {
     printf("> ");
     if (!fgets(line, sizeof(line), stdin)) {
-      printf("\n");
+      printf("\nBye bye.\n");
       break;
     }
     interpret(line);
