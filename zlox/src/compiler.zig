@@ -68,28 +68,35 @@ const rules = init_rules: {
         .precedence = .FACTOR,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_BANG)] = .{
+        .prefix = Parser.unary,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_BANG_EQUAL)] = .{
+        .infix = Parser.binary,
         .precedence = .EQUALITY,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_EQUAL)] = .{
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_EQUAL_EQUAL)] = .{
-        .precedence = .NONE,
+        .infix = Parser.binary,
+        .precedence = .EQUALITY,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_GREATER)] = .{
-        .precedence = .NONE,
+        .infix = Parser.binary,
+        .precedence = .COMPARISON,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_GREATER_EQUAL)] = .{
-        .precedence = .NONE,
+        .infix = Parser.binary,
+        .precedence = .COMPARISON,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_LESS)] = .{
-        .precedence = .NONE,
+        .infix = Parser.binary,
+        .precedence = .COMPARISON,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_LESS_EQUAL)] = .{
-        .precedence = .NONE,
+        .infix = Parser.binary,
+        .precedence = .COMPARISON,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_IDENTIFIER)] = .{
         .precedence = .NONE,
@@ -111,6 +118,7 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_FALSE)] = .{
+        .prefix = Parser.literal,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_FOR)] = .{
@@ -123,6 +131,7 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_NIL)] = .{
+        .prefix = Parser.literal,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_OR)] = .{
@@ -141,6 +150,7 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_TRUE)] = .{
+        .prefix = Parser.literal,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_VAR)] = .{
@@ -218,6 +228,12 @@ const Parser = struct {
         const rule = getRule(operatorType);
         try self.parsePrecedence(@enumFromInt(@intFromEnum(rule.precedence) + 1));
         switch (operatorType) {
+            .TOKEN_BANG_EQUAL => try self.emitBytes(.{ .instruction = .OP_EQUAL }, .{ .instruction = .OP_NOT }),
+            .TOKEN_EQUAL_EQUAL => try self.emitByte(.{ .instruction = .OP_EQUAL }),
+            .TOKEN_GREATER => try self.emitByte(.{ .instruction = .OP_GREATER }),
+            .TOKEN_GREATER_EQUAL => try self.emitBytes(.{ .instruction = .OP_LESS }, .{ .instruction = .OP_NOT }),
+            .TOKEN_LESS => try self.emitByte(.{ .instruction = .OP_LESS }),
+            .TOKEN_LESS_EQUAL => try self.emitBytes(.{ .instruction = .OP_GREATER }, .{ .instruction = .OP_NOT }),
             .TOKEN_PLUS => try self.emitByte(.{ .instruction = .OP_ADD }),
             .TOKEN_MINUS => try self.emitByte(.{ .instruction = .OP_SUBTRACT }),
             .TOKEN_STAR => try self.emitByte(.{ .instruction = .OP_MULTIPLY }),
@@ -232,14 +248,23 @@ const Parser = struct {
         try self.expression();
         self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
     }
+    fn literal(self: *Parser) !void {
+        switch (self.previous.type) {
+            .TOKEN_NIL => try self.emitByte(.{ .instruction = .OP_NIL }),
+            .TOKEN_TRUE => try self.emitByte(.{ .instruction = .OP_TRUE }),
+            .TOKEN_FALSE => try self.emitByte(.{ .instruction = .OP_FALSE }),
+            else => unreachable,
+        }
+    }
     fn number(self: *Parser) !void {
-        const value: val.Value = std.fmt.parseFloat(val.Value, self.previous.lexeme) catch unreachable;
-        try self.emitConstant(value);
+        const value: val.Number = std.fmt.parseFloat(val.Number, self.previous.lexeme) catch unreachable;
+        try self.emitConstant(val.Value.numberVal(value));
     }
     fn unary(self: *Parser) !void {
         const operatorType = self.previous.type;
         try self.parsePrecedence(.UNARY);
         switch (operatorType) {
+            .TOKEN_BANG => try self.emitByte(.{ .instruction = .OP_NOT }),
             .TOKEN_MINUS => try self.emitByte(.{ .instruction = .OP_NEGATE }),
             else => unreachable,
         }

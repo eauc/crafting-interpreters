@@ -20,17 +20,18 @@ pub fn main() !void {
 }
 
 fn repl(vm: *VM, allocator: std.mem.Allocator) !void {
-    var line: [1024]u8 = .{0} ** 1024;
+    var readBuffer: [1024]u8 = .{0} ** 1024;
     var stdin = std.io.getStdIn().reader();
     var stdout = std.io.getStdOut().writer();
     while (true) {
         try stdout.print("> ", .{});
-        _ = try stdin.readUntilDelimiterOrEof(&line, '\n');
-        if (line.len == 0) {
-            try stdout.print("\n", .{});
+        const readResult = try stdin.readUntilDelimiterOrEof(&readBuffer, '\n');
+        if (readResult) |line| {
+            try vm.interpret(line, allocator);
+        } else {
+            try stdout.print("\nBye bye.\n", .{});
             break;
         }
-        try vm.interpret(&line, allocator);
     }
 }
 

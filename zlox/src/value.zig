@@ -1,10 +1,77 @@
 const std = @import("std");
 const mem = @import("memory.zig");
 
-pub const Value = f64;
+pub const Number = f64;
+
+const ValueType = enum {
+    BOOL,
+    NIL,
+    NUMBER,
+};
+
+pub const Value = struct {
+    type: ValueType,
+    as: union(ValueType) {
+        BOOL: bool,
+        NIL: void,
+        NUMBER: Number,
+    },
+    pub fn boolVal(value: bool) Value {
+        return Value{
+            .type = .BOOL,
+            .as = .{ .BOOL = value },
+        };
+    }
+    pub fn nilVal() Value {
+        return Value{
+            .type = .NIL,
+            .as = .{ .NIL = {} },
+        };
+    }
+    pub fn numberVal(value: Number) Value {
+        return Value{
+            .type = .NUMBER,
+            .as = .{ .NUMBER = value },
+        };
+    }
+    pub fn isBool(self: Value) bool {
+        return self.type == .BOOL;
+    }
+    pub fn isNil(self: Value) bool {
+        return self.type == .NIL;
+    }
+    pub fn isNumber(self: Value) bool {
+        return self.type == .NUMBER;
+    }
+    pub fn asBool(self: Value) bool {
+        return self.as.BOOL;
+    }
+    pub fn asNumber(self: Value) Number {
+        return self.as.NUMBER;
+    }
+    pub fn isFalsey(self: Value) bool {
+        switch (self.type) {
+            .NIL => return true,
+            .BOOL => return !self.as.BOOL,
+            else => return false,
+        }
+    }
+    pub fn equals(self: Value, other: Value) bool {
+        if (self.type != other.type) return false;
+        switch (self.type) {
+            .BOOL => return self.as.BOOL == other.as.BOOL,
+            .NIL => return true,
+            .NUMBER => return self.as.NUMBER == other.as.NUMBER,
+        }
+    }
+};
 
 pub fn printValue(value: Value) void {
-    std.debug.print("{d}", .{value});
+    switch (value.type) {
+        .BOOL => std.debug.print("{}", .{value.as.BOOL}),
+        .NIL => std.debug.print("nil", .{}),
+        .NUMBER => std.debug.print("{d}", .{value.as.NUMBER}),
+    }
 }
 
 pub const ValueArray = struct {

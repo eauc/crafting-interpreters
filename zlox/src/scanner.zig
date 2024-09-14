@@ -139,7 +139,7 @@ pub const Scanner = struct {
         }
     }
     fn isAtEnd(self: *Scanner) bool {
-        return self.current[0] == 0;
+        return self.current.len == 0;
     }
     fn peek(self: *Scanner) u8 {
         if (self.isAtEnd()) return 0;
