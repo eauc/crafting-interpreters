@@ -6,7 +6,18 @@ pub fn build(b: *std.Build) void {
         .target = b.host,
     });
     exe.addCSourceFiles(.{
-        .files = &.{ "src/main.c", "src/chunk.c", "src/compiler.c", "src/debug.c", "src/memory.c", "src/object.c", "src/scanner.c", "src/value.c", "src/vm.c" },
+        .files = &.{
+            "src/main.c",
+            "src/chunk.c",
+            "src/compiler.c",
+            "src/debug.c",
+            "src/memory.c",
+            "src/object.c",
+            "src/scanner.c",
+            "src/table.c",
+            "src/value.c",
+            "src/vm.c",
+        },
         .flags = &.{
             "-std=c11",
             // "-gen-cdb-fragment-path", ".zig-cache/cdb"
