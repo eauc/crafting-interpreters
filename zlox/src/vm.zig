@@ -2,9 +2,10 @@ const std = @import("std");
 const chk = @import("chunk.zig");
 const cmp = @import("compiler.zig");
 const dbg = @import("debug.zig");
+const obj = @import("object.zig");
 const val = @import("value.zig");
 
-const InterpretError = error{
+pub const InterpretError = error{
     CompileError,
     RuntimeError,
 };
@@ -41,7 +42,7 @@ const Stack = struct {
 };
 
 pub const VM = struct {
-    chunk: *const chk.Chunk,
+    chunk: *chk.Chunk,
     ip: [*]const chk.OpCode,
     stack: Stack,
     pub const default = VM{
@@ -49,7 +50,7 @@ pub const VM = struct {
         .ip = undefined,
         .stack = Stack.default,
     };
-    pub fn interpret(self: *VM, source: []const u8, allocator: std.mem.Allocator) InterpretError!void {
+    pub fn interpret(self: *VM, source: []const u8, allocator: std.mem.Allocator) !void {
         var chunk = chk.Chunk.default;
         chunk.init(allocator);
         cmp.compile(source, &chunk) catch {
@@ -62,7 +63,7 @@ pub const VM = struct {
         self.ip = chunk.code.ptr;
         try self.run();
     }
-    pub fn run(self: *VM) InterpretError!void {
+    pub fn run(self: *VM) !void {
         while (true) {
             self.stack.trace();
             _ = dbg.disassembleInstruction(self.chunk.*, self.ip - self.chunk.code.ptr);
@@ -103,7 +104,20 @@ pub const VM = struct {
                     try self.binaryOp(bool, val.Value.boolVal, less);
                 },
                 .OP_ADD => {
-                    try self.binaryOp(val.Number, val.Value.numberVal, add);
+                    if (self.stack.peek(0).isString() and self.stack.peek(1).isString()) {
+                        const b = self.stack.pop().asString();
+                        const a = self.stack.pop().asString();
+                        const objString = try obj.concatenateStrings(a, b, self.chunk.allocator);
+                        self.chunk.addObject(objString);
+                        self.stack.push(val.Value.objVal(objString));
+                    } else if (self.stack.peek(0).isNumber() and self.stack.peek(1).isNumber()) {
+                        const b = self.stack.pop().asNumber();
+                        const a = self.stack.pop().asNumber();
+                        self.stack.push(val.Value.numberVal(a + b));
+                    } else {
+                        self.runtimeError("Operands must be two numbers or two strings.", .{});
+                        return InterpretError.RuntimeError;
+                    }
                 },
                 .OP_SUBTRACT => {
                     try self.binaryOp(val.Number, val.Value.numberVal, subtract);

@@ -1,5 +1,6 @@
 const std = @import("std");
 const mem = @import("memory.zig");
+const obj = @import("object.zig");
 const val = @import("value.zig");
 
 pub const Instruction = enum(u8) {
@@ -30,12 +31,14 @@ pub const Chunk = struct {
     code: []OpCode,
     lines: []isize,
     constants: val.ValueArray,
+    objects: ?*obj.Obj,
     pub const default: Chunk = .{
         .allocator = undefined,
         .count = 0,
         .code = &[_]OpCode{},
         .lines = &[_]isize{},
         .constants = val.ValueArray.default,
+        .objects = null,
     };
     pub fn init(self: *Chunk, allocator: std.mem.Allocator) void {
         self.allocator = allocator;
@@ -45,10 +48,19 @@ pub const Chunk = struct {
         self.constants.init(allocator);
     }
     pub fn free(self: *Chunk) void {
+        self.freeObjects();
         self.constants.free();
         self.allocator.free(self.code);
         self.allocator.free(self.lines);
         self.init(self.allocator);
+    }
+    fn freeObjects(self: *Chunk) void {
+        var o = self.objects;
+        while (o) |object| {
+            const next = object.next;
+            object.free(self.allocator);
+            o = next;
+        }
     }
     pub fn write(self: *Chunk, opCode: OpCode, line: isize) !void {
         if (self.code.len < self.count + 1) {
@@ -64,5 +76,9 @@ pub const Chunk = struct {
     pub fn addConstant(self: *Chunk, value: val.Value) !usize {
         try self.constants.write(value);
         return self.constants.count - 1;
+    }
+    pub fn addObject(self: *Chunk, object: *obj.Obj) void {
+        object.next = self.objects;
+        self.objects = object;
     }
 };

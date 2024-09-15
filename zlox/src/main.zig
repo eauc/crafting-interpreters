@@ -1,6 +1,7 @@
 const std = @import("std");
 const chk = @import("chunk.zig");
 const dbg = @import("debug.zig");
+const InterpretError = @import("vm.zig").InterpretError;
 const VM = @import("vm.zig").VM;
 
 pub fn main() !void {
@@ -27,7 +28,13 @@ fn repl(vm: *VM, allocator: std.mem.Allocator) !void {
         try stdout.print("> ", .{});
         const readResult = try stdin.readUntilDelimiterOrEof(&readBuffer, '\n');
         if (readResult) |line| {
-            try vm.interpret(line, allocator);
+            vm.interpret(line, allocator) catch |err| {
+                switch (err) {
+                    InterpretError.CompileError => std.debug.print("Compile error.\n", .{}),
+                    InterpretError.RuntimeError => std.debug.print("Runtime error.\n", .{}),
+                    else => return err,
+                }
+            };
         } else {
             try stdout.print("\nBye bye.\n", .{});
             break;

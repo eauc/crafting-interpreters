@@ -1,6 +1,7 @@
 const std = @import("std");
 const chk = @import("chunk.zig");
 const dbg = @import("debug.zig");
+const obj = @import("object.zig");
 const scn = @import("scanner.zig");
 const val = @import("value.zig");
 
@@ -21,8 +22,8 @@ const Precedence = enum(u4) {
 const ParseFn = fn (*Parser) anyerror!void;
 
 const ParseRule = struct {
-    prefix: *const ParseFn = undefined,
-    infix: *const ParseFn = undefined,
+    prefix: ?*const ParseFn = null,
+    infix: ?*const ParseFn = null,
     precedence: Precedence = .NONE,
 };
 
@@ -102,6 +103,7 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_STRING)] = .{
+        .prefix = Parser.string,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_NUMBER)] = .{
@@ -189,11 +191,11 @@ const Parser = struct {
     };
     pub fn advance(self: *Parser) void {
         self.previous = self.current;
-        // while (true) {
-        self.current = self.scanner.scanToken();
-        if (self.current.type != .TOKEN_ERROR) return;
-        self.printErrorAtCurrent(self.current.lexeme);
-        // }
+        while (true) {
+            self.current = self.scanner.scanToken();
+            if (self.current.type != .TOKEN_ERROR) return;
+            self.printErrorAtCurrent(self.current.lexeme);
+        }
     }
     pub fn consume(self: *Parser, tokenType: scn.TokenType, message: []const u8) void {
         if (self.current.type == tokenType) {
@@ -211,16 +213,17 @@ const Parser = struct {
     }
     fn parsePrecedence(self: *Parser, precedence: Precedence) !void {
         self.advance();
-        const prefixFn = getRule(self.previous.type).prefix;
-        if (prefixFn == undefined) {
+        if (getRule(self.previous.type).prefix) |prefixFn| {
+            try prefixFn(self);
+        } else {
             self.printError("Expect expression.");
             return;
         }
-        try prefixFn(self);
         while (@intFromEnum(precedence) <= @intFromEnum(getRule(self.current.type).precedence)) {
             self.advance();
-            const infixFn = getRule(self.previous.type).infix;
-            try infixFn(self);
+            if (getRule(self.previous.type).infix) |infixFn| {
+                try infixFn(self);
+            }
         }
     }
     fn binary(self: *Parser) !void {
@@ -259,6 +262,11 @@ const Parser = struct {
     fn number(self: *Parser) !void {
         const value: val.Number = std.fmt.parseFloat(val.Number, self.previous.lexeme) catch unreachable;
         try self.emitConstant(val.Value.numberVal(value));
+    }
+    fn string(self: *Parser) !void {
+        const objString = try obj.copyString(self.previous.lexeme[1 .. self.previous.lexeme.len - 1], self.chunk.allocator);
+        self.chunk.addObject(objString);
+        try self.emitConstant(val.Value.objVal(objString));
     }
     fn unary(self: *Parser) !void {
         const operatorType = self.previous.type;

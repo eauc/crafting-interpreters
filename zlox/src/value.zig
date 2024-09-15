@@ -1,5 +1,6 @@
 const std = @import("std");
 const mem = @import("memory.zig");
+const obj = @import("object.zig");
 
 pub const Number = f64;
 
@@ -7,6 +8,7 @@ const ValueType = enum {
     BOOL,
     NIL,
     NUMBER,
+    OBJ,
 };
 
 pub const Value = struct {
@@ -15,6 +17,7 @@ pub const Value = struct {
         BOOL: bool,
         NIL: void,
         NUMBER: Number,
+        OBJ: *obj.Obj,
     },
     pub fn boolVal(value: bool) Value {
         return Value{
@@ -34,6 +37,12 @@ pub const Value = struct {
             .as = .{ .NUMBER = value },
         };
     }
+    pub fn objVal(value: *obj.Obj) Value {
+        return Value{
+            .type = .OBJ,
+            .as = .{ .OBJ = value },
+        };
+    }
     pub fn isBool(self: Value) bool {
         return self.type == .BOOL;
     }
@@ -43,11 +52,29 @@ pub const Value = struct {
     pub fn isNumber(self: Value) bool {
         return self.type == .NUMBER;
     }
+    pub fn isObj(self: Value) bool {
+        return self.type == .OBJ;
+    }
+    pub fn isObjType(self: Value, expectedObjType: obj.ObjType) bool {
+        return self.isObj() and self.objType() == expectedObjType;
+    }
+    pub fn isString(self: Value) bool {
+        return self.isObjType(.STRING);
+    }
     pub fn asBool(self: Value) bool {
         return self.as.BOOL;
     }
     pub fn asNumber(self: Value) Number {
         return self.as.NUMBER;
+    }
+    pub fn asObj(self: Value) *obj.Obj {
+        return self.as.OBJ;
+    }
+    pub fn asString(self: Value) *obj.ObjString {
+        return @fieldParentPtr("obj", self.asObj());
+    }
+    pub fn objType(self: Value) obj.ObjType {
+        return self.asObj().type;
     }
     pub fn isFalsey(self: Value) bool {
         switch (self.type) {
@@ -62,6 +89,11 @@ pub const Value = struct {
             .BOOL => return self.as.BOOL == other.as.BOOL,
             .NIL => return true,
             .NUMBER => return self.as.NUMBER == other.as.NUMBER,
+            .OBJ => {
+                const a = self.asString();
+                const b = other.asString();
+                return std.mem.eql(u8, a.chars, b.chars);
+            },
         }
     }
 };
@@ -71,6 +103,7 @@ pub fn printValue(value: Value) void {
         .BOOL => std.debug.print("{}", .{value.as.BOOL}),
         .NIL => std.debug.print("nil", .{}),
         .NUMBER => std.debug.print("{d}", .{value.as.NUMBER}),
+        .OBJ => obj.printObject(value.asObj()),
     }
 }
 
