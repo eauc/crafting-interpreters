@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = @import("memory.zig");
 const obj = @import("object.zig");
+const tbl = @import("table.zig");
 const val = @import("value.zig");
 
 pub const Instruction = enum(u8) {
@@ -31,6 +32,7 @@ pub const Chunk = struct {
     code: []OpCode,
     lines: []isize,
     constants: val.ValueArray,
+    strings: tbl.Table,
     objects: ?*obj.Obj,
     pub const default: Chunk = .{
         .allocator = undefined,
@@ -38,6 +40,7 @@ pub const Chunk = struct {
         .code = &[_]OpCode{},
         .lines = &[_]isize{},
         .constants = val.ValueArray.default,
+        .strings = tbl.Table.default,
         .objects = null,
     };
     pub fn init(self: *Chunk, allocator: std.mem.Allocator) void {
@@ -46,9 +49,11 @@ pub const Chunk = struct {
         self.code = &[_]OpCode{};
         self.lines = &[_]isize{};
         self.constants.init(allocator);
+        self.strings.init(allocator);
     }
     pub fn free(self: *Chunk) void {
         self.freeObjects();
+        self.strings.free();
         self.constants.free();
         self.allocator.free(self.code);
         self.allocator.free(self.lines);

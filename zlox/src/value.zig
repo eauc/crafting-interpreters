@@ -89,11 +89,7 @@ pub const Value = struct {
             .BOOL => return self.as.BOOL == other.as.BOOL,
             .NIL => return true,
             .NUMBER => return self.as.NUMBER == other.as.NUMBER,
-            .OBJ => {
-                const a = self.asString();
-                const b = other.asString();
-                return std.mem.eql(u8, a.chars, b.chars);
-            },
+            .OBJ => return self.as.OBJ == other.as.OBJ,
         }
     }
 };

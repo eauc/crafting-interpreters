@@ -264,9 +264,8 @@ const Parser = struct {
         try self.emitConstant(val.Value.numberVal(value));
     }
     fn string(self: *Parser) !void {
-        const objString = try obj.copyString(self.previous.lexeme[1 .. self.previous.lexeme.len - 1], self.chunk.allocator);
-        self.chunk.addObject(objString);
-        try self.emitConstant(val.Value.objVal(objString));
+        const object = try obj.copyString(self.previous.lexeme[1 .. self.previous.lexeme.len - 1], self.chunk);
+        try self.emitConstant(val.Value.objVal(object));
     }
     fn unary(self: *Parser) !void {
         const operatorType = self.previous.type;

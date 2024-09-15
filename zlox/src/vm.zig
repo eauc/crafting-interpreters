@@ -107,9 +107,8 @@ pub const VM = struct {
                     if (self.stack.peek(0).isString() and self.stack.peek(1).isString()) {
                         const b = self.stack.pop().asString();
                         const a = self.stack.pop().asString();
-                        const objString = try obj.concatenateStrings(a, b, self.chunk.allocator);
-                        self.chunk.addObject(objString);
-                        self.stack.push(val.Value.objVal(objString));
+                        const object = try obj.concatenateStrings(a, b, self.chunk);
+                        self.stack.push(val.Value.objVal(object));
                     } else if (self.stack.peek(0).isNumber() and self.stack.peek(1).isNumber()) {
                         const b = self.stack.pop().asNumber();
                         const a = self.stack.pop().asNumber();
