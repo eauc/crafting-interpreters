@@ -19,7 +19,7 @@ const Precedence = enum(u4) {
     PRIMARY,
 };
 
-const ParseFn = fn (*Parser) anyerror!void;
+const ParseFn = fn (*Parser, bool) anyerror!void;
 
 const ParseRule = struct {
     prefix: ?*const ParseFn = null,
@@ -100,6 +100,7 @@ const rules = init_rules: {
         .precedence = .COMPARISON,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_IDENTIFIER)] = .{
+        .prefix = Parser.variable,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_STRING)] = .{
@@ -204,6 +205,13 @@ const Parser = struct {
             self.printErrorAtCurrent(message);
         }
     }
+    pub fn match(self: *Parser, tokenType: scn.TokenType) bool {
+        if (!self.check(tokenType)) {
+            return false;
+        }
+        self.advance();
+        return true;
+    }
     pub fn endCompiler(self: *Parser) !void {
         self.consume(.TOKEN_EOF, "Expect end of expression.");
         try self.emitReturn();
@@ -211,10 +219,28 @@ const Parser = struct {
             dbg.disassembleChunk(self.chunk.*, "code");
         }
     }
+    fn synchronize(self: *Parser) void {
+        self.panicMode = false;
+
+        while (!self.check(.TOKEN_EOF)) {
+            if (self.previous.type == .TOKEN_SEMICOLON) {
+                return;
+            }
+            switch (self.current.type) {
+                .TOKEN_CLASS, .TOKEN_FUN, .TOKEN_VAR, .TOKEN_FOR, .TOKEN_IF, .TOKEN_WHILE, .TOKEN_PRINT, .TOKEN_RETURN => return,
+                else => {},
+            }
+            self.advance();
+        }
+    }
+    fn check(self: *Parser, tokenType: scn.TokenType) bool {
+        return self.current.type == tokenType;
+    }
     fn parsePrecedence(self: *Parser, precedence: Precedence) !void {
         self.advance();
+        const canAssign = @intFromEnum(precedence) <= @intFromEnum(Precedence.ASSIGNMENT);
         if (getRule(self.previous.type).prefix) |prefixFn| {
-            try prefixFn(self);
+            try prefixFn(self, canAssign);
         } else {
             self.printError("Expect expression.");
             return;
@@ -222,11 +248,55 @@ const Parser = struct {
         while (@intFromEnum(precedence) <= @intFromEnum(getRule(self.current.type).precedence)) {
             self.advance();
             if (getRule(self.previous.type).infix) |infixFn| {
-                try infixFn(self);
+                try infixFn(self, canAssign);
             }
         }
+        if (canAssign and self.match(.TOKEN_EQUAL)) {
+            self.printError("Invalid assignment target.");
+        }
     }
-    fn binary(self: *Parser) !void {
+    pub fn declaration(self: *Parser) !void {
+        if (self.match(.TOKEN_VAR)) {
+            try self.varDeclaration();
+        } else {
+            try self.statement();
+        }
+        if (self.panicMode) {
+            self.synchronize();
+        }
+    }
+    fn varDeclaration(self: *Parser) !void {
+        const global = try self.parseVariable("Expect variable name.");
+        if (self.match(.TOKEN_EQUAL)) {
+            try self.expression();
+        } else {
+            try self.emitByte(.{ .instruction = .OP_NIL });
+        }
+        self.consume(.TOKEN_SEMICOLON, "Expect ';' after variable declaration.");
+        try self.defineVariable(global);
+    }
+    fn statement(self: *Parser) !void {
+        if (self.match(.TOKEN_PRINT)) {
+            try self.printStatement();
+        } else {
+            try self.expressionStatement();
+        }
+    }
+    fn printStatement(self: *Parser) !void {
+        try self.expression();
+        self.consume(.TOKEN_SEMICOLON, "Expect ';' after value.");
+        try self.emitByte(.{ .instruction = .OP_PRINT });
+    }
+    fn expressionStatement(self: *Parser) !void {
+        try self.expression();
+        self.consume(.TOKEN_SEMICOLON, "Expect ';' after expression.");
+        try self.emitByte(.{ .instruction = .OP_POP });
+    }
+    fn expression(self: *Parser) !void {
+        try self.parsePrecedence(.ASSIGNMENT);
+    }
+    fn binary(self: *Parser, canAssign: bool) !void {
+        _ = canAssign;
         const operatorType = self.previous.type;
         const rule = getRule(operatorType);
         try self.parsePrecedence(@enumFromInt(@intFromEnum(rule.precedence) + 1));
@@ -244,14 +314,13 @@ const Parser = struct {
             else => unreachable,
         }
     }
-    pub fn expression(self: *Parser) !void {
-        try self.parsePrecedence(.ASSIGNMENT);
-    }
-    fn grouping(self: *Parser) !void {
+    fn grouping(self: *Parser, canAssign: bool) !void {
+        _ = canAssign;
         try self.expression();
         self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
     }
-    fn literal(self: *Parser) !void {
+    fn literal(self: *Parser, canAssign: bool) !void {
+        _ = canAssign;
         switch (self.previous.type) {
             .TOKEN_NIL => try self.emitByte(.{ .instruction = .OP_NIL }),
             .TOKEN_TRUE => try self.emitByte(.{ .instruction = .OP_TRUE }),
@@ -259,15 +328,18 @@ const Parser = struct {
             else => unreachable,
         }
     }
-    fn number(self: *Parser) !void {
+    fn number(self: *Parser, canAssign: bool) !void {
+        _ = canAssign;
         const value: val.Number = std.fmt.parseFloat(val.Number, self.previous.lexeme) catch unreachable;
         try self.emitConstant(val.Value.numberVal(value));
     }
-    fn string(self: *Parser) !void {
+    fn string(self: *Parser, canAssign: bool) !void {
+        _ = canAssign;
         const object = try obj.copyString(self.previous.lexeme[1 .. self.previous.lexeme.len - 1], self.chunk);
         try self.emitConstant(val.Value.objVal(object));
     }
-    fn unary(self: *Parser) !void {
+    fn unary(self: *Parser, canAssign: bool) !void {
+        _ = canAssign;
         const operatorType = self.previous.type;
         try self.parsePrecedence(.UNARY);
         switch (operatorType) {
@@ -276,8 +348,24 @@ const Parser = struct {
             else => unreachable,
         }
     }
-    fn emitConstant(self: *Parser, value: val.Value) !void {
-        try self.emitBytes(.{ .instruction = .OP_CONSTANT }, .{ .constant = try self.makeConstant(value) });
+    fn variable(self: *Parser, canAssign: bool) !void {
+        try self.namedVariable(self.previous, canAssign);
+    }
+    fn namedVariable(self: *Parser, name: scn.Token, canAssign: bool) !void {
+        const arg = try self.identifierConstant(name);
+        if (canAssign and self.match(.TOKEN_EQUAL)) {
+            try self.expression();
+            try self.emitBytes(.{ .instruction = .OP_SET_GLOBAL }, .{ .constant = arg });
+        } else {
+            try self.emitBytes(.{ .instruction = .OP_GET_GLOBAL }, .{ .constant = arg });
+        }
+    }
+    fn parseVariable(self: *Parser, message: []const u8) !u8 {
+        self.consume(.TOKEN_IDENTIFIER, message);
+        return try self.identifierConstant(self.previous);
+    }
+    fn identifierConstant(self: *Parser, name: scn.Token) !u8 {
+        return try self.makeConstant(val.Value.objVal(try obj.copyString(name.lexeme, self.chunk)));
     }
     fn makeConstant(self: *Parser, value: val.Value) !u8 {
         const constant = try self.chunk.addConstant(value);
@@ -286,6 +374,12 @@ const Parser = struct {
             return 0;
         }
         return @intCast(constant);
+    }
+    fn defineVariable(self: *Parser, global: u8) !void {
+        try self.emitBytes(.{ .instruction = .OP_DEFINE_GLOBAL }, .{ .constant = global });
+    }
+    fn emitConstant(self: *Parser, value: val.Value) !void {
+        try self.emitBytes(.{ .instruction = .OP_CONSTANT }, .{ .constant = try self.makeConstant(value) });
     }
     fn emitReturn(self: *Parser) !void {
         try self.emitByte(.{ .instruction = .OP_RETURN });
@@ -326,7 +420,9 @@ pub fn compile(source: []const u8, chunk: *chk.Chunk) !void {
     parser.scanner = scanner;
     parser.chunk = chunk;
     parser.advance();
-    try parser.expression();
+    while (!parser.match(.TOKEN_EOF)) {
+        try parser.declaration();
+    }
     try parser.endCompiler();
     if (parser.hadError) {
         return error.CompileError;

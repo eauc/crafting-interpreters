@@ -10,6 +10,7 @@ pub const Instruction = enum(u8) {
     OP_NOT,
     OP_TRUE,
     OP_FALSE,
+    OP_POP,
     OP_NEGATE,
     OP_EQUAL,
     OP_GREATER,
@@ -18,6 +19,10 @@ pub const Instruction = enum(u8) {
     OP_SUBTRACT,
     OP_MULTIPLY,
     OP_DIVIDE,
+    OP_GET_GLOBAL,
+    OP_SET_GLOBAL,
+    OP_DEFINE_GLOBAL,
+    OP_PRINT,
     OP_RETURN,
 };
 
@@ -32,6 +37,7 @@ pub const Chunk = struct {
     code: []OpCode,
     lines: []isize,
     constants: val.ValueArray,
+    globals: tbl.Table,
     strings: tbl.Table,
     objects: ?*obj.Obj,
     pub const default: Chunk = .{
@@ -40,6 +46,7 @@ pub const Chunk = struct {
         .code = &[_]OpCode{},
         .lines = &[_]isize{},
         .constants = val.ValueArray.default,
+        .globals = tbl.Table.default,
         .strings = tbl.Table.default,
         .objects = null,
     };
@@ -49,10 +56,12 @@ pub const Chunk = struct {
         self.code = &[_]OpCode{};
         self.lines = &[_]isize{};
         self.constants.init(allocator);
+        self.globals.init(allocator);
         self.strings.init(allocator);
     }
     pub fn free(self: *Chunk) void {
         self.freeObjects();
+        self.globals.free();
         self.strings.free();
         self.constants.free();
         self.allocator.free(self.code);
@@ -77,6 +86,18 @@ pub const Chunk = struct {
         self.code[self.count] = opCode;
         self.lines[self.count] = line;
         self.count += 1;
+    }
+    pub fn defineGlobal(self: *Chunk, name: *obj.ObjString, value: val.Value) !void {
+        _ = try self.globals.set(name, value);
+    }
+    pub fn getGlobal(self: *Chunk, name: *obj.ObjString, value: *val.Value) bool {
+        return self.globals.get(name, value);
+    }
+    pub fn setGlobal(self: *Chunk, name: *obj.ObjString, value: val.Value) !bool {
+        return self.globals.set(name, value);
+    }
+    pub fn deleteGlobal(self: *Chunk, name: *obj.ObjString) void {
+        _ = self.globals.delete(name);
     }
     pub fn addConstant(self: *Chunk, value: val.Value) !usize {
         try self.constants.write(value);

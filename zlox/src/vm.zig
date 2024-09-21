@@ -92,6 +92,9 @@ pub const VM = struct {
                 .OP_NOT => {
                     self.stack.push(val.Value.boolVal(self.stack.pop().isFalsey()));
                 },
+                .OP_POP => {
+                    _ = self.stack.pop();
+                },
                 .OP_EQUAL => {
                     const b = self.stack.pop();
                     const a = self.stack.pop();
@@ -127,9 +130,33 @@ pub const VM = struct {
                 .OP_DIVIDE => {
                     try self.binaryOp(val.Number, val.Value.numberVal, divide);
                 },
-                .OP_RETURN => {
+                .OP_GET_GLOBAL => {
+                    const name = self.readString();
+                    var value = val.Value.nilVal();
+                    if (!self.chunk.getGlobal(name, &value)) {
+                        self.runtimeError("Undefined variable '{s}'.", .{name.chars});
+                        return InterpretError.RuntimeError;
+                    }
+                    self.stack.push(value);
+                },
+                .OP_SET_GLOBAL => {
+                    const name = self.readString();
+                    if (try self.chunk.setGlobal(name, self.stack.peek(0))) {
+                        self.chunk.deleteGlobal(name);
+                        self.runtimeError("Undefined variable '{s}'.", .{name.chars});
+                        return InterpretError.RuntimeError;
+                    }
+                },
+                .OP_DEFINE_GLOBAL => {
+                    const name = self.readString();
+                    try self.chunk.defineGlobal(name, self.stack.peek(0));
+                    _ = self.stack.pop();
+                },
+                .OP_PRINT => {
                     val.printValue(self.stack.pop());
                     std.debug.print("\n", .{});
+                },
+                .OP_RETURN => {
                     return;
                 },
             }
@@ -144,13 +171,16 @@ pub const VM = struct {
         const a = self.stack.pop().asNumber();
         self.stack.push(valueType(op(a, b)));
     }
+    fn readString(self: *VM) *obj.ObjString {
+        return self.readConstant().asString();
+    }
+    fn readConstant(self: *VM) val.Value {
+        return self.chunk.constants.values[self.readByte().constant];
+    }
     fn readByte(self: *VM) chk.OpCode {
         const byte = self.ip[0];
         self.ip += 1;
         return byte;
-    }
-    fn readConstant(self: *VM) val.Value {
-        return self.chunk.constants.values[self.readByte().constant];
     }
     fn runtimeError(self: *VM, comptime message: []const u8, args: anytype) void {
         std.debug.print(message, args);

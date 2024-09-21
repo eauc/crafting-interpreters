@@ -34,7 +34,7 @@ pub const Table = struct {
     pub fn get(self: *Table, key: *obj.ObjString, value: *val.Value) bool {
         if (self.count == 0) return false;
         const entry = findEntry(self.entries, self.capacity, key);
-        if (entry.key) {
+        if (entry.key) |_| {
             value.* = entry.value;
             return true;
         } else {
@@ -75,7 +75,7 @@ pub const Table = struct {
     pub fn delete(self: *Table, key: *obj.ObjString) bool {
         if (self.count == 0) return false;
         const entry = findEntry(self.entries, self.capacity, key);
-        if (entry.key) {
+        if (entry.key) |_| {
             entry.key = null;
             entry.value = val.Value.nilVal();
             return true;
