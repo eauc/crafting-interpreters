@@ -19,7 +19,7 @@ const Precedence = enum(u4) {
     PRIMARY,
 };
 
-const ParseFn = fn (*Parser, bool) anyerror!void;
+const ParseFn = fn (*Parser, bool) std.mem.Allocator.Error!void;
 
 const ParseRule = struct {
     prefix: ?*const ParseFn = null,
@@ -175,6 +175,11 @@ fn getRule(tokenType: scn.TokenType) ParseRule {
     return rules[@intFromEnum(tokenType)];
 }
 
+const Local = struct {
+    name: scn.Token,
+    depth: isize,
+};
+
 const Parser = struct {
     scanner: scn.Scanner,
     chunk: *chk.Chunk,
@@ -182,6 +187,9 @@ const Parser = struct {
     previous: scn.Token,
     hadError: bool,
     panicMode: bool,
+    locals: [std.math.maxInt(u8) + 1]Local,
+    localCount: usize,
+    scopeDepth: usize,
     const default = Parser{
         .scanner = undefined,
         .chunk = undefined,
@@ -189,6 +197,9 @@ const Parser = struct {
         .previous = undefined,
         .hadError = false,
         .panicMode = false,
+        .locals = undefined,
+        .localCount = 0,
+        .scopeDepth = 0,
     };
     pub fn advance(self: *Parser) void {
         self.previous = self.current;
@@ -236,7 +247,7 @@ const Parser = struct {
     fn check(self: *Parser, tokenType: scn.TokenType) bool {
         return self.current.type == tokenType;
     }
-    fn parsePrecedence(self: *Parser, precedence: Precedence) !void {
+    fn parsePrecedence(self: *Parser, precedence: Precedence) std.mem.Allocator.Error!void {
         self.advance();
         const canAssign = @intFromEnum(precedence) <= @intFromEnum(Precedence.ASSIGNMENT);
         if (getRule(self.previous.type).prefix) |prefixFn| {
@@ -255,7 +266,7 @@ const Parser = struct {
             self.printError("Invalid assignment target.");
         }
     }
-    pub fn declaration(self: *Parser) !void {
+    pub fn declaration(self: *Parser) std.mem.Allocator.Error!void {
         if (self.match(.TOKEN_VAR)) {
             try self.varDeclaration();
         } else {
@@ -265,7 +276,7 @@ const Parser = struct {
             self.synchronize();
         }
     }
-    fn varDeclaration(self: *Parser) !void {
+    fn varDeclaration(self: *Parser) std.mem.Allocator.Error!void {
         const global = try self.parseVariable("Expect variable name.");
         if (self.match(.TOKEN_EQUAL)) {
             try self.expression();
@@ -275,27 +286,47 @@ const Parser = struct {
         self.consume(.TOKEN_SEMICOLON, "Expect ';' after variable declaration.");
         try self.defineVariable(global);
     }
-    fn statement(self: *Parser) !void {
+    fn statement(self: *Parser) std.mem.Allocator.Error!void {
         if (self.match(.TOKEN_PRINT)) {
             try self.printStatement();
+        } else if (self.match(.TOKEN_LEFT_BRACE)) {
+            self.beginScope();
+            try self.block();
+            try self.endScope();
         } else {
             try self.expressionStatement();
         }
     }
-    fn printStatement(self: *Parser) !void {
+    fn beginScope(self: *Parser) void {
+        self.scopeDepth += 1;
+    }
+    fn endScope(self: *Parser) !void {
+        self.scopeDepth -= 1;
+        while (self.localCount > 0 and self.locals[self.localCount - 1].depth > self.scopeDepth) {
+            try self.emitByte(.{ .instruction = .OP_POP });
+            self.localCount -= 1;
+        }
+    }
+    fn printStatement(self: *Parser) std.mem.Allocator.Error!void {
         try self.expression();
         self.consume(.TOKEN_SEMICOLON, "Expect ';' after value.");
         try self.emitByte(.{ .instruction = .OP_PRINT });
     }
-    fn expressionStatement(self: *Parser) !void {
+    fn expressionStatement(self: *Parser) std.mem.Allocator.Error!void {
         try self.expression();
         self.consume(.TOKEN_SEMICOLON, "Expect ';' after expression.");
         try self.emitByte(.{ .instruction = .OP_POP });
     }
-    fn expression(self: *Parser) !void {
+    fn block(self: *Parser) std.mem.Allocator.Error!void {
+        while (!self.check(.TOKEN_RIGHT_BRACE) and !self.check(.TOKEN_EOF)) {
+            try self.declaration();
+        }
+        self.consume(.TOKEN_RIGHT_BRACE, "Expect '}' after block.");
+    }
+    fn expression(self: *Parser) std.mem.Allocator.Error!void {
         try self.parsePrecedence(.ASSIGNMENT);
     }
-    fn binary(self: *Parser, canAssign: bool) !void {
+    fn binary(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
         _ = canAssign;
         const operatorType = self.previous.type;
         const rule = getRule(operatorType);
@@ -314,12 +345,12 @@ const Parser = struct {
             else => unreachable,
         }
     }
-    fn grouping(self: *Parser, canAssign: bool) !void {
+    fn grouping(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
         _ = canAssign;
         try self.expression();
         self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
     }
-    fn literal(self: *Parser, canAssign: bool) !void {
+    fn literal(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
         _ = canAssign;
         switch (self.previous.type) {
             .TOKEN_NIL => try self.emitByte(.{ .instruction = .OP_NIL }),
@@ -328,17 +359,17 @@ const Parser = struct {
             else => unreachable,
         }
     }
-    fn number(self: *Parser, canAssign: bool) !void {
+    fn number(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
         _ = canAssign;
         const value: val.Number = std.fmt.parseFloat(val.Number, self.previous.lexeme) catch unreachable;
         try self.emitConstant(val.Value.numberVal(value));
     }
-    fn string(self: *Parser, canAssign: bool) !void {
+    fn string(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
         _ = canAssign;
         const object = try obj.copyString(self.previous.lexeme[1 .. self.previous.lexeme.len - 1], self.chunk);
         try self.emitConstant(val.Value.objVal(object));
     }
-    fn unary(self: *Parser, canAssign: bool) !void {
+    fn unary(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
         _ = canAssign;
         const operatorType = self.previous.type;
         try self.parsePrecedence(.UNARY);
@@ -348,26 +379,38 @@ const Parser = struct {
             else => unreachable,
         }
     }
-    fn variable(self: *Parser, canAssign: bool) !void {
+    fn variable(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
         try self.namedVariable(self.previous, canAssign);
     }
-    fn namedVariable(self: *Parser, name: scn.Token, canAssign: bool) !void {
-        const arg = try self.identifierConstant(name);
+    fn namedVariable(self: *Parser, name: scn.Token, canAssign: bool) std.mem.Allocator.Error!void {
+        var getOp: chk.Instruction = undefined;
+        var setOp: chk.Instruction = undefined;
+        const arg: u8 = if (self.resolveLocal(name)) |depth| blk: {
+            getOp = .OP_GET_LOCAL;
+            setOp = .OP_SET_LOCAL;
+            break :blk @intCast(depth);
+        } else blk: {
+            getOp = .OP_GET_GLOBAL;
+            setOp = .OP_SET_GLOBAL;
+            break :blk try self.identifierConstant(name);
+        };
         if (canAssign and self.match(.TOKEN_EQUAL)) {
             try self.expression();
-            try self.emitBytes(.{ .instruction = .OP_SET_GLOBAL }, .{ .constant = arg });
+            try self.emitBytes(.{ .instruction = setOp }, .{ .constant = arg });
         } else {
-            try self.emitBytes(.{ .instruction = .OP_GET_GLOBAL }, .{ .constant = arg });
+            try self.emitBytes(.{ .instruction = getOp }, .{ .constant = arg });
         }
     }
-    fn parseVariable(self: *Parser, message: []const u8) !u8 {
+    fn parseVariable(self: *Parser, message: []const u8) std.mem.Allocator.Error!u8 {
         self.consume(.TOKEN_IDENTIFIER, message);
+        self.declareVariable();
+        if (self.scopeDepth > 0) return 0;
         return try self.identifierConstant(self.previous);
     }
-    fn identifierConstant(self: *Parser, name: scn.Token) !u8 {
+    fn identifierConstant(self: *Parser, name: scn.Token) std.mem.Allocator.Error!u8 {
         return try self.makeConstant(val.Value.objVal(try obj.copyString(name.lexeme, self.chunk)));
     }
-    fn makeConstant(self: *Parser, value: val.Value) !u8 {
+    fn makeConstant(self: *Parser, value: val.Value) std.mem.Allocator.Error!u8 {
         const constant = try self.chunk.addConstant(value);
         if (constant > std.math.maxInt(u8)) {
             self.printError("Too many constants in one chunk.");
@@ -375,21 +418,72 @@ const Parser = struct {
         }
         return @intCast(constant);
     }
-    fn defineVariable(self: *Parser, global: u8) !void {
+    fn declareVariable(self: *Parser) void {
+        if (self.scopeDepth == 0) {
+            return;
+        }
+        const name = self.previous;
+        if (self.localCount > 0) {
+            for (1..self.localCount) |i| {
+                const local = &self.locals[self.localCount - i];
+                if (local.depth != -1 and local.depth < self.scopeDepth) {
+                    break;
+                }
+                if (name.identifiersEqual(local.name)) {
+                    self.printError("Already a variable with this name in this scope.");
+                }
+            }
+        }
+        self.addLocal(name);
+    }
+    fn defineVariable(self: *Parser, global: u8) std.mem.Allocator.Error!void {
+        if (self.scopeDepth > 0) {
+            self.markInitialized();
+            return;
+        }
         try self.emitBytes(.{ .instruction = .OP_DEFINE_GLOBAL }, .{ .constant = global });
     }
-    fn emitConstant(self: *Parser, value: val.Value) !void {
+    fn emitConstant(self: *Parser, value: val.Value) std.mem.Allocator.Error!void {
         try self.emitBytes(.{ .instruction = .OP_CONSTANT }, .{ .constant = try self.makeConstant(value) });
     }
-    fn emitReturn(self: *Parser) !void {
+    fn emitReturn(self: *Parser) std.mem.Allocator.Error!void {
         try self.emitByte(.{ .instruction = .OP_RETURN });
     }
-    fn emitBytes(self: *Parser, opCode1: chk.OpCode, opCode2: chk.OpCode) !void {
+    fn emitBytes(self: *Parser, opCode1: chk.OpCode, opCode2: chk.OpCode) std.mem.Allocator.Error!void {
         try self.emitByte(opCode1);
         try self.emitByte(opCode2);
     }
-    fn emitByte(self: *Parser, opCode: chk.OpCode) !void {
+    fn emitByte(self: *Parser, opCode: chk.OpCode) std.mem.Allocator.Error!void {
         try self.chunk.write(opCode, self.previous.line);
+    }
+    fn addLocal(self: *Parser, name: scn.Token) void {
+        if (self.localCount == std.math.maxInt(u8) + 1) {
+            self.printError("Too many local variables in function.");
+            return;
+        }
+        const local = &self.locals[self.localCount];
+        local.name = name;
+        local.depth = -1;
+        self.localCount += 1;
+    }
+    fn markInitialized(self: *Parser) void {
+        std.debug.print("lc: {}\n", .{self.localCount});
+        self.locals[self.localCount - 1].depth = @intCast(self.scopeDepth);
+    }
+    fn resolveLocal(self: *Parser, name: scn.Token) ?usize {
+        if (self.localCount == 0) {
+            return null;
+        }
+        for (1..self.localCount) |i| {
+            const local = &self.locals[self.localCount - i];
+            if (name.identifiersEqual(local.name)) {
+                if (local.depth == -1) {
+                    self.printError("Can't read local variable in its own initializer.");
+                }
+                return self.localCount - i;
+            }
+        }
+        return null;
     }
     fn printErrorAtCurrent(self: *Parser, message: []const u8) void {
         self.printErrorAt(self.current, message);

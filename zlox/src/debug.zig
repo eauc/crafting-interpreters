@@ -77,6 +77,12 @@ pub fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
         .OP_SET_GLOBAL => {
             return constantInstruction("OP_SET_GLOBAL", chunk, offset);
         },
+        .OP_GET_LOCAL => {
+            return byteInstruction("OP_GET_LOCAL", chunk, offset);
+        },
+        .OP_SET_LOCAL => {
+            return byteInstruction("OP_SET_LOCAL", chunk, offset);
+        },
         .OP_DEFINE_GLOBAL => {
             return constantInstruction("OP_DEFINE_GLOBAL", chunk, offset);
         },
@@ -92,6 +98,12 @@ pub fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
 fn simpleInstruction(name: []const u8, offset: usize) usize {
     std.debug.print("{s}\n", .{name});
     return offset + 1;
+}
+
+fn byteInstruction(name: []const u8, chunk: chk.Chunk, offset: usize) usize {
+    const slot = chunk.code[offset + 1].constant;
+    std.debug.print("{s: <16} {d: >4} '", .{ name, slot });
+    return offset + 2;
 }
 
 fn constantInstruction(name: []const u8, chunk: chk.Chunk, offset: usize) usize {

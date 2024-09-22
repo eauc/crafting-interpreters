@@ -152,6 +152,14 @@ pub const VM = struct {
                     try self.chunk.defineGlobal(name, self.stack.peek(0));
                     _ = self.stack.pop();
                 },
+                .OP_GET_LOCAL => {
+                    const slot = self.readByte().constant;
+                    self.stack.push(self.stack.stack[slot]);
+                },
+                .OP_SET_LOCAL => {
+                    const slot = self.readByte().constant;
+                    self.stack.stack[slot] = self.stack.peek(0);
+                },
                 .OP_PRINT => {
                     val.printValue(self.stack.pop());
                     std.debug.print("\n", .{});

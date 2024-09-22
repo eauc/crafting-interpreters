@@ -67,6 +67,9 @@ pub const Token = struct {
             .line = line,
         };
     }
+    pub fn identifiersEqual(self: Token, other: Token) bool {
+        return std.mem.eql(u8, self.lexeme, other.lexeme);
+    }
 };
 
 pub const Scanner = struct {
