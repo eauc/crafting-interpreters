@@ -164,6 +164,20 @@ pub const VM = struct {
                     val.printValue(self.stack.pop());
                     std.debug.print("\n", .{});
                 },
+                .OP_JUMP_IF_FALSE => {
+                    const offset = self.readShort();
+                    if (self.stack.peek(0).isFalsey()) {
+                        self.ip += offset;
+                    }
+                },
+                .OP_JUMP => {
+                    const offset = self.readShort();
+                    self.ip += offset;
+                },
+                .OP_LOOP => {
+                    const offset = self.readShort();
+                    self.ip -= offset;
+                },
                 .OP_RETURN => {
                     return;
                 },
@@ -184,6 +198,13 @@ pub const VM = struct {
     }
     fn readConstant(self: *VM) val.Value {
         return self.chunk.constants.values[self.readByte().constant];
+    }
+    fn readShort(self: *VM) u16 {
+        const byte1 = self.ip[0].constant;
+        const byte2 = self.ip[1].constant;
+        const short: u16 = std.math.shl(u16, byte1, 8) | byte2;
+        self.ip += 2;
+        return short;
     }
     fn readByte(self: *VM) chk.OpCode {
         const byte = self.ip[0];

@@ -112,7 +112,8 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_AND)] = .{
-        .precedence = .NONE,
+        .infix = Parser.and_,
+        .precedence = .AND,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_CLASS)] = .{
         .precedence = .NONE,
@@ -138,7 +139,8 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_OR)] = .{
-        .precedence = .NONE,
+        .infix = Parser.or_,
+        .precedence = .OR,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_PRINT)] = .{
         .precedence = .NONE,
@@ -289,6 +291,12 @@ const Parser = struct {
     fn statement(self: *Parser) std.mem.Allocator.Error!void {
         if (self.match(.TOKEN_PRINT)) {
             try self.printStatement();
+        } else if (self.match(.TOKEN_IF)) {
+            try self.ifStatement();
+        } else if (self.match(.TOKEN_WHILE)) {
+            try self.whileStatement();
+        } else if (self.match(.TOKEN_FOR)) {
+            try self.forStatement();
         } else if (self.match(.TOKEN_LEFT_BRACE)) {
             self.beginScope();
             try self.block();
@@ -311,6 +319,82 @@ const Parser = struct {
         try self.expression();
         self.consume(.TOKEN_SEMICOLON, "Expect ';' after value.");
         try self.emitByte(.{ .instruction = .OP_PRINT });
+    }
+    fn ifStatement(self: *Parser) std.mem.Allocator.Error!void {
+        self.consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
+        try self.expression();
+        self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+        const thenJump = try self.emitJump(.OP_JUMP_IF_FALSE);
+        try self.emitByte(.{ .instruction = .OP_POP });
+        try self.statement();
+
+        const elseJump = try self.emitJump(.OP_JUMP);
+        self.patchJump(thenJump);
+
+        try self.emitByte(.{ .instruction = .OP_POP });
+        if (self.match(.TOKEN_ELSE)) {
+            try self.statement();
+        }
+        self.patchJump(elseJump);
+    }
+    fn whileStatement(self: *Parser) std.mem.Allocator.Error!void {
+        const loopStart = self.chunk.count;
+        self.consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
+        try self.expression();
+        self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+        const exitJump = try self.emitJump(.OP_JUMP_IF_FALSE);
+        try self.emitByte(.{ .instruction = .OP_POP });
+        try self.statement();
+        try self.emitLoop(loopStart);
+
+        self.patchJump(exitJump);
+        try self.emitByte(.{ .instruction = .OP_POP });
+    }
+    fn forStatement(self: *Parser) std.mem.Allocator.Error!void {
+        self.beginScope();
+
+        self.consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
+        if (self.match(.TOKEN_SEMICOLON)) {
+            // No initializer.
+        } else if (self.match(.TOKEN_VAR)) {
+            try self.varDeclaration();
+        } else {
+            try self.expressionStatement();
+        }
+
+        var loopStart = self.chunk.count;
+
+        var exitJump: ?usize = null;
+        if (!self.match(.TOKEN_SEMICOLON)) {
+            try self.expression();
+            self.consume(.TOKEN_SEMICOLON, "Expect ';' after 'for' condition.");
+
+            exitJump = try self.emitJump(.OP_JUMP_IF_FALSE);
+            try self.emitByte(.{ .instruction = .OP_POP });
+        }
+
+        if (!self.match(.TOKEN_RIGHT_PAREN)) {
+            const bodyJump = try self.emitJump(.OP_JUMP);
+            const incrementStart = self.chunk.count;
+            try self.expression();
+            try self.emitByte(.{ .instruction = .OP_POP });
+            self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after 'for' clauses.");
+
+            try self.emitLoop(loopStart);
+            loopStart = incrementStart;
+            self.patchJump(bodyJump);
+        }
+        try self.statement();
+        try self.emitLoop(loopStart);
+
+        if (exitJump) |j| {
+            self.patchJump(j);
+            try self.emitByte(.{ .instruction = .OP_POP });
+        }
+
+        try self.endScope();
     }
     fn expressionStatement(self: *Parser) std.mem.Allocator.Error!void {
         try self.expression();
@@ -344,6 +428,22 @@ const Parser = struct {
             .TOKEN_SLASH => try self.emitByte(.{ .instruction = .OP_DIVIDE }),
             else => unreachable,
         }
+    }
+    fn and_(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
+        _ = canAssign;
+        const endJump = try self.emitJump(.OP_JUMP_IF_FALSE);
+        try self.emitByte(.{ .instruction = .OP_POP });
+        try self.parsePrecedence(.AND);
+        self.patchJump(endJump);
+    }
+    fn or_(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
+        _ = canAssign;
+        const elseJump = try self.emitJump(.OP_JUMP_IF_FALSE);
+        const endJump = try self.emitJump(.OP_JUMP);
+        self.patchJump(elseJump);
+        try self.emitByte(.{ .instruction = .OP_POP });
+        try self.parsePrecedence(.OR);
+        self.patchJump(endJump);
     }
     fn grouping(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
         _ = canAssign;
@@ -449,6 +549,28 @@ const Parser = struct {
     fn emitReturn(self: *Parser) std.mem.Allocator.Error!void {
         try self.emitByte(.{ .instruction = .OP_RETURN });
     }
+    fn emitLoop(self: *Parser, loopStart: usize) std.mem.Allocator.Error!void {
+        try self.emitByte(.{ .instruction = .OP_LOOP });
+        const offset = self.chunk.count - loopStart + 2;
+        if (offset > std.math.maxInt(u16)) {
+            self.printError("Loop body too large.");
+        }
+        try self.emitBytes(.{ .constant = @intCast((offset >> 8) & 0xff) }, .{ .constant = @intCast(offset & 0xff) });
+    }
+    fn emitJump(self: *Parser, instruction: chk.Instruction) std.mem.Allocator.Error!usize {
+        try self.emitByte(.{ .instruction = instruction });
+        try self.emitByte(.{ .constant = 0xff });
+        try self.emitByte(.{ .constant = 0xff });
+        return self.chunk.count - 2;
+    }
+    fn patchJump(self: *Parser, offset: usize) void {
+        const jump = self.chunk.count - offset - 2;
+        if (jump > std.math.maxInt(u16)) {
+            self.printError("Too much code to jump over.");
+        }
+        self.chunk.code[offset] = .{ .constant = @intCast(jump >> 8) };
+        self.chunk.code[offset + 1] = .{ .constant = @intCast(jump & 0xff) };
+    }
     fn emitBytes(self: *Parser, opCode1: chk.OpCode, opCode2: chk.OpCode) std.mem.Allocator.Error!void {
         try self.emitByte(opCode1);
         try self.emitByte(opCode2);
@@ -467,14 +589,13 @@ const Parser = struct {
         self.localCount += 1;
     }
     fn markInitialized(self: *Parser) void {
-        std.debug.print("lc: {}\n", .{self.localCount});
         self.locals[self.localCount - 1].depth = @intCast(self.scopeDepth);
     }
     fn resolveLocal(self: *Parser, name: scn.Token) ?usize {
         if (self.localCount == 0) {
             return null;
         }
-        for (1..self.localCount) |i| {
+        for (1..self.localCount + 1) |i| {
             const local = &self.locals[self.localCount - i];
             if (name.identifiersEqual(local.name)) {
                 if (local.depth == -1) {

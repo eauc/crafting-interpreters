@@ -89,6 +89,15 @@ pub fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
         .OP_PRINT => {
             return simpleInstruction("OP_PRINT", offset);
         },
+        .OP_JUMP_IF_FALSE => {
+            return jumpInstruction("OP_JUMP_IF_FALSE", .forward, chunk, offset);
+        },
+        .OP_JUMP => {
+            return jumpInstruction("OP_JUMP", .forward, chunk, offset);
+        },
+        .OP_LOOP => {
+            return jumpInstruction("OP_LOOP", .backward, chunk, offset);
+        },
         .OP_RETURN => {
             return simpleInstruction("OP_RETURN", offset);
         },
@@ -102,7 +111,7 @@ fn simpleInstruction(name: []const u8, offset: usize) usize {
 
 fn byteInstruction(name: []const u8, chunk: chk.Chunk, offset: usize) usize {
     const slot = chunk.code[offset + 1].constant;
-    std.debug.print("{s: <16} {d: >4} '", .{ name, slot });
+    std.debug.print("{s: <16} {d: >4}\n", .{ name, slot });
     return offset + 2;
 }
 
@@ -112,4 +121,16 @@ fn constantInstruction(name: []const u8, chunk: chk.Chunk, offset: usize) usize 
     val.printValue(chunk.constants.values[constant]);
     std.debug.print("'\n", .{});
     return offset + 2;
+}
+
+fn jumpInstruction(name: []const u8, sign: enum {
+    forward,
+    backward,
+}, chunk: chk.Chunk, offset: usize) usize {
+    const byte1 = chunk.code[offset + 1].constant;
+    const byte2 = chunk.code[offset + 2].constant;
+    const jump: u16 = std.math.shl(u16, byte1, 8) | byte2;
+    const target = if (sign == .forward) offset + 3 + jump else offset + 3 - jump;
+    std.debug.print("{s: <16} {d: >4} -> {d}\n", .{ name, offset, target });
+    return offset + 3;
 }

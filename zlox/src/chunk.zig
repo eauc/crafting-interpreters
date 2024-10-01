@@ -25,6 +25,9 @@ pub const Instruction = enum(u8) {
     OP_SET_LOCAL,
     OP_DEFINE_GLOBAL,
     OP_PRINT,
+    OP_JUMP_IF_FALSE,
+    OP_JUMP,
+    OP_LOOP,
     OP_RETURN,
 };
 
