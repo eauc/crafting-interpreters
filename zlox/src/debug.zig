@@ -98,6 +98,9 @@ pub fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
         .OP_LOOP => {
             return jumpInstruction("OP_LOOP", .backward, chunk, offset);
         },
+        .OP_CALL => {
+            return byteInstruction("OP_CALL", chunk, offset);
+        },
         .OP_RETURN => {
             return simpleInstruction("OP_RETURN", offset);
         },

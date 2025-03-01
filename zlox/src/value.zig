@@ -58,6 +58,12 @@ pub const Value = struct {
     pub fn isObjType(self: Value, expectedObjType: obj.ObjType) bool {
         return self.isObj() and self.objType() == expectedObjType;
     }
+    pub fn isFunction(self: Value) bool {
+        return self.isObjType(.FUNCTION);
+    }
+    pub fn isNative(self: Value) bool {
+        return self.isObjType(.NATIVE);
+    }
     pub fn isString(self: Value) bool {
         return self.isObjType(.STRING);
     }
@@ -69,6 +75,12 @@ pub const Value = struct {
     }
     pub fn asObj(self: Value) *obj.Obj {
         return self.as.OBJ;
+    }
+    pub fn asFunction(self: Value) *obj.ObjFunction {
+        return @fieldParentPtr("obj", self.asObj());
+    }
+    pub fn asNative(self: Value) *obj.ObjNative {
+        return @fieldParentPtr("obj", self.asObj());
     }
     pub fn asString(self: Value) *obj.ObjString {
         return @fieldParentPtr("obj", self.asObj());
@@ -99,7 +111,7 @@ pub fn printValue(value: Value) void {
         .BOOL => std.debug.print("{}", .{value.as.BOOL}),
         .NIL => std.debug.print("nil", .{}),
         .NUMBER => std.debug.print("{d}", .{value.as.NUMBER}),
-        .OBJ => obj.printObject(value.asObj()),
+        .OBJ => value.asObj().print(),
     }
 }
 

@@ -10,9 +10,12 @@ pub fn main() !void {
     const allocator = arena.allocator();
 
     var vm = VM.default;
+    try vm.init(allocator);
+    defer vm.free();
+
     const args = try std.process.argsAlloc(allocator);
     if (args.len == 1) {
-        try repl(&vm, allocator);
+        try repl(&vm);
     } else if (args.len == 2) {
         try runFile(&vm, args[1], allocator);
     } else {
@@ -20,7 +23,7 @@ pub fn main() !void {
     }
 }
 
-fn repl(vm: *VM, allocator: std.mem.Allocator) !void {
+fn repl(vm: *VM) !void {
     var readBuffer: [1024]u8 = .{0} ** 1024;
     var stdin = std.io.getStdIn().reader();
     var stdout = std.io.getStdOut().writer();
@@ -28,7 +31,7 @@ fn repl(vm: *VM, allocator: std.mem.Allocator) !void {
         try stdout.print("> ", .{});
         const readResult = try stdin.readUntilDelimiterOrEof(&readBuffer, '\n');
         if (readResult) |line| {
-            vm.interpret(line, allocator) catch |err| {
+            vm.interpret(line) catch |err| {
                 switch (err) {
                     InterpretError.CompileError => std.debug.print("Compile error.\n", .{}),
                     InterpretError.RuntimeError => std.debug.print("Runtime error.\n", .{}),
@@ -44,7 +47,7 @@ fn repl(vm: *VM, allocator: std.mem.Allocator) !void {
 
 fn runFile(vm: *VM, filePath: []const u8, allocator: std.mem.Allocator) !void {
     const source = try readFile(filePath, allocator);
-    try vm.interpret(source, allocator);
+    try vm.interpret(source);
 }
 
 fn readFile(filePath: []const u8, allocator: std.mem.Allocator) ![]const u8 {

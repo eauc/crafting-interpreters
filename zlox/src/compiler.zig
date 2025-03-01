@@ -3,6 +3,7 @@ const chk = @import("chunk.zig");
 const dbg = @import("debug.zig");
 const obj = @import("object.zig");
 const scn = @import("scanner.zig");
+const tbl = @import("table.zig");
 const val = @import("value.zig");
 
 const Precedence = enum(u4) {
@@ -19,7 +20,7 @@ const Precedence = enum(u4) {
     PRIMARY,
 };
 
-const ParseFn = fn (*Parser, bool) std.mem.Allocator.Error!void;
+const ParseFn = fn (*Compiler, bool) std.mem.Allocator.Error!void;
 
 const ParseRule = struct {
     prefix: ?*const ParseFn = null,
@@ -30,8 +31,9 @@ const ParseRule = struct {
 const rules = init_rules: {
     var array = [_]ParseRule{.{}} ** @intFromEnum(scn.TokenType.max_value);
     array[@intFromEnum(scn.TokenType.TOKEN_LEFT_PAREN)] = .{
-        .prefix = Parser.grouping,
-        .precedence = .NONE,
+        .prefix = Compiler.grouping,
+        .infix = Compiler.call,
+        .precedence = .CALL,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_RIGHT_PAREN)] = .{
         .precedence = .NONE,
@@ -49,70 +51,70 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_MINUS)] = .{
-        .prefix = Parser.unary,
-        .infix = Parser.binary,
+        .prefix = Compiler.unary,
+        .infix = Compiler.binary,
         .precedence = .TERM,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_PLUS)] = .{
-        .infix = Parser.binary,
+        .infix = Compiler.binary,
         .precedence = .TERM,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_SEMICOLON)] = .{
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_SLASH)] = .{
-        .infix = Parser.binary,
+        .infix = Compiler.binary,
         .precedence = .FACTOR,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_STAR)] = .{
-        .infix = Parser.binary,
+        .infix = Compiler.binary,
         .precedence = .FACTOR,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_BANG)] = .{
-        .prefix = Parser.unary,
+        .prefix = Compiler.unary,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_BANG_EQUAL)] = .{
-        .infix = Parser.binary,
+        .infix = Compiler.binary,
         .precedence = .EQUALITY,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_EQUAL)] = .{
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_EQUAL_EQUAL)] = .{
-        .infix = Parser.binary,
+        .infix = Compiler.binary,
         .precedence = .EQUALITY,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_GREATER)] = .{
-        .infix = Parser.binary,
+        .infix = Compiler.binary,
         .precedence = .COMPARISON,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_GREATER_EQUAL)] = .{
-        .infix = Parser.binary,
+        .infix = Compiler.binary,
         .precedence = .COMPARISON,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_LESS)] = .{
-        .infix = Parser.binary,
+        .infix = Compiler.binary,
         .precedence = .COMPARISON,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_LESS_EQUAL)] = .{
-        .infix = Parser.binary,
+        .infix = Compiler.binary,
         .precedence = .COMPARISON,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_IDENTIFIER)] = .{
-        .prefix = Parser.variable,
+        .prefix = Compiler.variable,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_STRING)] = .{
-        .prefix = Parser.string,
+        .prefix = Compiler.string,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_NUMBER)] = .{
-        .prefix = Parser.number,
+        .prefix = Compiler.number,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_AND)] = .{
-        .infix = Parser.and_,
+        .infix = Compiler.and_,
         .precedence = .AND,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_CLASS)] = .{
@@ -122,7 +124,7 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_FALSE)] = .{
-        .prefix = Parser.literal,
+        .prefix = Compiler.literal,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_FOR)] = .{
@@ -135,11 +137,11 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_NIL)] = .{
-        .prefix = Parser.literal,
+        .prefix = Compiler.literal,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_OR)] = .{
-        .infix = Parser.or_,
+        .infix = Compiler.or_,
         .precedence = .OR,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_PRINT)] = .{
@@ -155,7 +157,7 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_TRUE)] = .{
-        .prefix = Parser.literal,
+        .prefix = Compiler.literal,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_VAR)] = .{
@@ -183,25 +185,17 @@ const Local = struct {
 };
 
 const Parser = struct {
-    scanner: scn.Scanner,
-    chunk: *chk.Chunk,
+    scanner: *scn.Scanner,
     current: scn.Token,
     previous: scn.Token,
     hadError: bool,
     panicMode: bool,
-    locals: [std.math.maxInt(u8) + 1]Local,
-    localCount: usize,
-    scopeDepth: usize,
     const default = Parser{
         .scanner = undefined,
-        .chunk = undefined,
         .current = undefined,
         .previous = undefined,
         .hadError = false,
         .panicMode = false,
-        .locals = undefined,
-        .localCount = 0,
-        .scopeDepth = 0,
     };
     pub fn advance(self: *Parser) void {
         self.previous = self.current;
@@ -225,12 +219,8 @@ const Parser = struct {
         self.advance();
         return true;
     }
-    pub fn endCompiler(self: *Parser) !void {
-        self.consume(.TOKEN_EOF, "Expect end of expression.");
-        try self.emitReturn();
-        if (dbg.PRINT_CODE and !self.hadError) {
-            dbg.disassembleChunk(self.chunk.*, "code");
-        }
+    fn check(self: *Parser, tokenType: scn.TokenType) bool {
+        return self.current.type == tokenType;
     }
     fn synchronize(self: *Parser) void {
         self.panicMode = false;
@@ -245,366 +235,6 @@ const Parser = struct {
             }
             self.advance();
         }
-    }
-    fn check(self: *Parser, tokenType: scn.TokenType) bool {
-        return self.current.type == tokenType;
-    }
-    fn parsePrecedence(self: *Parser, precedence: Precedence) std.mem.Allocator.Error!void {
-        self.advance();
-        const canAssign = @intFromEnum(precedence) <= @intFromEnum(Precedence.ASSIGNMENT);
-        if (getRule(self.previous.type).prefix) |prefixFn| {
-            try prefixFn(self, canAssign);
-        } else {
-            self.printError("Expect expression.");
-            return;
-        }
-        while (@intFromEnum(precedence) <= @intFromEnum(getRule(self.current.type).precedence)) {
-            self.advance();
-            if (getRule(self.previous.type).infix) |infixFn| {
-                try infixFn(self, canAssign);
-            }
-        }
-        if (canAssign and self.match(.TOKEN_EQUAL)) {
-            self.printError("Invalid assignment target.");
-        }
-    }
-    pub fn declaration(self: *Parser) std.mem.Allocator.Error!void {
-        if (self.match(.TOKEN_VAR)) {
-            try self.varDeclaration();
-        } else {
-            try self.statement();
-        }
-        if (self.panicMode) {
-            self.synchronize();
-        }
-    }
-    fn varDeclaration(self: *Parser) std.mem.Allocator.Error!void {
-        const global = try self.parseVariable("Expect variable name.");
-        if (self.match(.TOKEN_EQUAL)) {
-            try self.expression();
-        } else {
-            try self.emitByte(.{ .instruction = .OP_NIL });
-        }
-        self.consume(.TOKEN_SEMICOLON, "Expect ';' after variable declaration.");
-        try self.defineVariable(global);
-    }
-    fn statement(self: *Parser) std.mem.Allocator.Error!void {
-        if (self.match(.TOKEN_PRINT)) {
-            try self.printStatement();
-        } else if (self.match(.TOKEN_IF)) {
-            try self.ifStatement();
-        } else if (self.match(.TOKEN_WHILE)) {
-            try self.whileStatement();
-        } else if (self.match(.TOKEN_FOR)) {
-            try self.forStatement();
-        } else if (self.match(.TOKEN_LEFT_BRACE)) {
-            self.beginScope();
-            try self.block();
-            try self.endScope();
-        } else {
-            try self.expressionStatement();
-        }
-    }
-    fn beginScope(self: *Parser) void {
-        self.scopeDepth += 1;
-    }
-    fn endScope(self: *Parser) !void {
-        self.scopeDepth -= 1;
-        while (self.localCount > 0 and self.locals[self.localCount - 1].depth > self.scopeDepth) {
-            try self.emitByte(.{ .instruction = .OP_POP });
-            self.localCount -= 1;
-        }
-    }
-    fn printStatement(self: *Parser) std.mem.Allocator.Error!void {
-        try self.expression();
-        self.consume(.TOKEN_SEMICOLON, "Expect ';' after value.");
-        try self.emitByte(.{ .instruction = .OP_PRINT });
-    }
-    fn ifStatement(self: *Parser) std.mem.Allocator.Error!void {
-        self.consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
-        try self.expression();
-        self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
-
-        const thenJump = try self.emitJump(.OP_JUMP_IF_FALSE);
-        try self.emitByte(.{ .instruction = .OP_POP });
-        try self.statement();
-
-        const elseJump = try self.emitJump(.OP_JUMP);
-        self.patchJump(thenJump);
-
-        try self.emitByte(.{ .instruction = .OP_POP });
-        if (self.match(.TOKEN_ELSE)) {
-            try self.statement();
-        }
-        self.patchJump(elseJump);
-    }
-    fn whileStatement(self: *Parser) std.mem.Allocator.Error!void {
-        const loopStart = self.chunk.count;
-        self.consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
-        try self.expression();
-        self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
-
-        const exitJump = try self.emitJump(.OP_JUMP_IF_FALSE);
-        try self.emitByte(.{ .instruction = .OP_POP });
-        try self.statement();
-        try self.emitLoop(loopStart);
-
-        self.patchJump(exitJump);
-        try self.emitByte(.{ .instruction = .OP_POP });
-    }
-    fn forStatement(self: *Parser) std.mem.Allocator.Error!void {
-        self.beginScope();
-
-        self.consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
-        if (self.match(.TOKEN_SEMICOLON)) {
-            // No initializer.
-        } else if (self.match(.TOKEN_VAR)) {
-            try self.varDeclaration();
-        } else {
-            try self.expressionStatement();
-        }
-
-        var loopStart = self.chunk.count;
-
-        var exitJump: ?usize = null;
-        if (!self.match(.TOKEN_SEMICOLON)) {
-            try self.expression();
-            self.consume(.TOKEN_SEMICOLON, "Expect ';' after 'for' condition.");
-
-            exitJump = try self.emitJump(.OP_JUMP_IF_FALSE);
-            try self.emitByte(.{ .instruction = .OP_POP });
-        }
-
-        if (!self.match(.TOKEN_RIGHT_PAREN)) {
-            const bodyJump = try self.emitJump(.OP_JUMP);
-            const incrementStart = self.chunk.count;
-            try self.expression();
-            try self.emitByte(.{ .instruction = .OP_POP });
-            self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after 'for' clauses.");
-
-            try self.emitLoop(loopStart);
-            loopStart = incrementStart;
-            self.patchJump(bodyJump);
-        }
-        try self.statement();
-        try self.emitLoop(loopStart);
-
-        if (exitJump) |j| {
-            self.patchJump(j);
-            try self.emitByte(.{ .instruction = .OP_POP });
-        }
-
-        try self.endScope();
-    }
-    fn expressionStatement(self: *Parser) std.mem.Allocator.Error!void {
-        try self.expression();
-        self.consume(.TOKEN_SEMICOLON, "Expect ';' after expression.");
-        try self.emitByte(.{ .instruction = .OP_POP });
-    }
-    fn block(self: *Parser) std.mem.Allocator.Error!void {
-        while (!self.check(.TOKEN_RIGHT_BRACE) and !self.check(.TOKEN_EOF)) {
-            try self.declaration();
-        }
-        self.consume(.TOKEN_RIGHT_BRACE, "Expect '}' after block.");
-    }
-    fn expression(self: *Parser) std.mem.Allocator.Error!void {
-        try self.parsePrecedence(.ASSIGNMENT);
-    }
-    fn binary(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
-        _ = canAssign;
-        const operatorType = self.previous.type;
-        const rule = getRule(operatorType);
-        try self.parsePrecedence(@enumFromInt(@intFromEnum(rule.precedence) + 1));
-        switch (operatorType) {
-            .TOKEN_BANG_EQUAL => try self.emitBytes(.{ .instruction = .OP_EQUAL }, .{ .instruction = .OP_NOT }),
-            .TOKEN_EQUAL_EQUAL => try self.emitByte(.{ .instruction = .OP_EQUAL }),
-            .TOKEN_GREATER => try self.emitByte(.{ .instruction = .OP_GREATER }),
-            .TOKEN_GREATER_EQUAL => try self.emitBytes(.{ .instruction = .OP_LESS }, .{ .instruction = .OP_NOT }),
-            .TOKEN_LESS => try self.emitByte(.{ .instruction = .OP_LESS }),
-            .TOKEN_LESS_EQUAL => try self.emitBytes(.{ .instruction = .OP_GREATER }, .{ .instruction = .OP_NOT }),
-            .TOKEN_PLUS => try self.emitByte(.{ .instruction = .OP_ADD }),
-            .TOKEN_MINUS => try self.emitByte(.{ .instruction = .OP_SUBTRACT }),
-            .TOKEN_STAR => try self.emitByte(.{ .instruction = .OP_MULTIPLY }),
-            .TOKEN_SLASH => try self.emitByte(.{ .instruction = .OP_DIVIDE }),
-            else => unreachable,
-        }
-    }
-    fn and_(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
-        _ = canAssign;
-        const endJump = try self.emitJump(.OP_JUMP_IF_FALSE);
-        try self.emitByte(.{ .instruction = .OP_POP });
-        try self.parsePrecedence(.AND);
-        self.patchJump(endJump);
-    }
-    fn or_(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
-        _ = canAssign;
-        const elseJump = try self.emitJump(.OP_JUMP_IF_FALSE);
-        const endJump = try self.emitJump(.OP_JUMP);
-        self.patchJump(elseJump);
-        try self.emitByte(.{ .instruction = .OP_POP });
-        try self.parsePrecedence(.OR);
-        self.patchJump(endJump);
-    }
-    fn grouping(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
-        _ = canAssign;
-        try self.expression();
-        self.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
-    }
-    fn literal(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
-        _ = canAssign;
-        switch (self.previous.type) {
-            .TOKEN_NIL => try self.emitByte(.{ .instruction = .OP_NIL }),
-            .TOKEN_TRUE => try self.emitByte(.{ .instruction = .OP_TRUE }),
-            .TOKEN_FALSE => try self.emitByte(.{ .instruction = .OP_FALSE }),
-            else => unreachable,
-        }
-    }
-    fn number(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
-        _ = canAssign;
-        const value: val.Number = std.fmt.parseFloat(val.Number, self.previous.lexeme) catch unreachable;
-        try self.emitConstant(val.Value.numberVal(value));
-    }
-    fn string(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
-        _ = canAssign;
-        const object = try obj.copyString(self.previous.lexeme[1 .. self.previous.lexeme.len - 1], self.chunk);
-        try self.emitConstant(val.Value.objVal(object));
-    }
-    fn unary(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
-        _ = canAssign;
-        const operatorType = self.previous.type;
-        try self.parsePrecedence(.UNARY);
-        switch (operatorType) {
-            .TOKEN_BANG => try self.emitByte(.{ .instruction = .OP_NOT }),
-            .TOKEN_MINUS => try self.emitByte(.{ .instruction = .OP_NEGATE }),
-            else => unreachable,
-        }
-    }
-    fn variable(self: *Parser, canAssign: bool) std.mem.Allocator.Error!void {
-        try self.namedVariable(self.previous, canAssign);
-    }
-    fn namedVariable(self: *Parser, name: scn.Token, canAssign: bool) std.mem.Allocator.Error!void {
-        var getOp: chk.Instruction = undefined;
-        var setOp: chk.Instruction = undefined;
-        const arg: u8 = if (self.resolveLocal(name)) |depth| blk: {
-            getOp = .OP_GET_LOCAL;
-            setOp = .OP_SET_LOCAL;
-            break :blk @intCast(depth);
-        } else blk: {
-            getOp = .OP_GET_GLOBAL;
-            setOp = .OP_SET_GLOBAL;
-            break :blk try self.identifierConstant(name);
-        };
-        if (canAssign and self.match(.TOKEN_EQUAL)) {
-            try self.expression();
-            try self.emitBytes(.{ .instruction = setOp }, .{ .constant = arg });
-        } else {
-            try self.emitBytes(.{ .instruction = getOp }, .{ .constant = arg });
-        }
-    }
-    fn parseVariable(self: *Parser, message: []const u8) std.mem.Allocator.Error!u8 {
-        self.consume(.TOKEN_IDENTIFIER, message);
-        self.declareVariable();
-        if (self.scopeDepth > 0) return 0;
-        return try self.identifierConstant(self.previous);
-    }
-    fn identifierConstant(self: *Parser, name: scn.Token) std.mem.Allocator.Error!u8 {
-        return try self.makeConstant(val.Value.objVal(try obj.copyString(name.lexeme, self.chunk)));
-    }
-    fn makeConstant(self: *Parser, value: val.Value) std.mem.Allocator.Error!u8 {
-        const constant = try self.chunk.addConstant(value);
-        if (constant > std.math.maxInt(u8)) {
-            self.printError("Too many constants in one chunk.");
-            return 0;
-        }
-        return @intCast(constant);
-    }
-    fn declareVariable(self: *Parser) void {
-        if (self.scopeDepth == 0) {
-            return;
-        }
-        const name = self.previous;
-        if (self.localCount > 0) {
-            for (1..self.localCount) |i| {
-                const local = &self.locals[self.localCount - i];
-                if (local.depth != -1 and local.depth < self.scopeDepth) {
-                    break;
-                }
-                if (name.identifiersEqual(local.name)) {
-                    self.printError("Already a variable with this name in this scope.");
-                }
-            }
-        }
-        self.addLocal(name);
-    }
-    fn defineVariable(self: *Parser, global: u8) std.mem.Allocator.Error!void {
-        if (self.scopeDepth > 0) {
-            self.markInitialized();
-            return;
-        }
-        try self.emitBytes(.{ .instruction = .OP_DEFINE_GLOBAL }, .{ .constant = global });
-    }
-    fn emitConstant(self: *Parser, value: val.Value) std.mem.Allocator.Error!void {
-        try self.emitBytes(.{ .instruction = .OP_CONSTANT }, .{ .constant = try self.makeConstant(value) });
-    }
-    fn emitReturn(self: *Parser) std.mem.Allocator.Error!void {
-        try self.emitByte(.{ .instruction = .OP_RETURN });
-    }
-    fn emitLoop(self: *Parser, loopStart: usize) std.mem.Allocator.Error!void {
-        try self.emitByte(.{ .instruction = .OP_LOOP });
-        const offset = self.chunk.count - loopStart + 2;
-        if (offset > std.math.maxInt(u16)) {
-            self.printError("Loop body too large.");
-        }
-        try self.emitBytes(.{ .constant = @intCast((offset >> 8) & 0xff) }, .{ .constant = @intCast(offset & 0xff) });
-    }
-    fn emitJump(self: *Parser, instruction: chk.Instruction) std.mem.Allocator.Error!usize {
-        try self.emitByte(.{ .instruction = instruction });
-        try self.emitByte(.{ .constant = 0xff });
-        try self.emitByte(.{ .constant = 0xff });
-        return self.chunk.count - 2;
-    }
-    fn patchJump(self: *Parser, offset: usize) void {
-        const jump = self.chunk.count - offset - 2;
-        if (jump > std.math.maxInt(u16)) {
-            self.printError("Too much code to jump over.");
-        }
-        self.chunk.code[offset] = .{ .constant = @intCast(jump >> 8) };
-        self.chunk.code[offset + 1] = .{ .constant = @intCast(jump & 0xff) };
-    }
-    fn emitBytes(self: *Parser, opCode1: chk.OpCode, opCode2: chk.OpCode) std.mem.Allocator.Error!void {
-        try self.emitByte(opCode1);
-        try self.emitByte(opCode2);
-    }
-    fn emitByte(self: *Parser, opCode: chk.OpCode) std.mem.Allocator.Error!void {
-        try self.chunk.write(opCode, self.previous.line);
-    }
-    fn addLocal(self: *Parser, name: scn.Token) void {
-        if (self.localCount == std.math.maxInt(u8) + 1) {
-            self.printError("Too many local variables in function.");
-            return;
-        }
-        const local = &self.locals[self.localCount];
-        local.name = name;
-        local.depth = -1;
-        self.localCount += 1;
-    }
-    fn markInitialized(self: *Parser) void {
-        self.locals[self.localCount - 1].depth = @intCast(self.scopeDepth);
-    }
-    fn resolveLocal(self: *Parser, name: scn.Token) ?usize {
-        if (self.localCount == 0) {
-            return null;
-        }
-        for (1..self.localCount + 1) |i| {
-            const local = &self.locals[self.localCount - i];
-            if (name.identifiersEqual(local.name)) {
-                if (local.depth == -1) {
-                    self.printError("Can't read local variable in its own initializer.");
-                }
-                return self.localCount - i;
-            }
-        }
-        return null;
     }
     fn printErrorAtCurrent(self: *Parser, message: []const u8) void {
         self.printErrorAt(self.current, message);
@@ -628,18 +258,504 @@ const Parser = struct {
     }
 };
 
-pub fn compile(source: []const u8, chunk: *chk.Chunk) !void {
+const FunctionType = enum {
+    FUNCTION,
+    SCRIPT,
+};
+
+const Compiler = struct {
+    parser: *Parser,
+    strings: *tbl.Table,
+    function: *obj.ObjFunction,
+    type: FunctionType,
+    locals: [std.math.maxInt(u8) + 1]Local,
+    localCount: usize,
+    scopeDepth: usize,
+    const default = Compiler{
+        .parser = undefined,
+        .strings = undefined,
+        .function = undefined,
+        .type = .SCRIPT,
+        .locals = undefined,
+        .localCount = 0,
+        .scopeDepth = 0,
+    };
+    pub fn init(self: *Compiler, parser: *Parser, fnType: FunctionType, strings: *tbl.Table) !void {
+        self.parser = parser;
+        self.strings = strings;
+        self.function = try obj.ObjFunction.create(strings.allocator);
+        if (fnType != .SCRIPT) {
+            self.function.name = @fieldParentPtr("obj", try strings.copyString(self.parser.previous.lexeme));
+        }
+        self.type = fnType;
+        self.locals[0] = .{
+            .name = scn.Token{
+                .type = .TOKEN_STRING,
+                .lexeme = "",
+                .line = 0,
+            },
+            .depth = 0,
+        };
+        self.localCount = 1;
+        self.scopeDepth = 0;
+    }
+    pub fn end(self: *Compiler) !*obj.ObjFunction {
+        try self.emitReturn();
+        if (dbg.PRINT_CODE and !self.parser.hadError) {
+            dbg.disassembleChunk(
+                self.function.chunk,
+                if (self.function.name) |name| name.chars else "<script>",
+            );
+        }
+        return self.function;
+    }
+    fn parsePrecedence(self: *Compiler, precedence: Precedence) std.mem.Allocator.Error!void {
+        self.parser.advance();
+        const canAssign = @intFromEnum(precedence) <= @intFromEnum(Precedence.ASSIGNMENT);
+        if (getRule(self.parser.previous.type).prefix) |prefixFn| {
+            try prefixFn(self, canAssign);
+        } else {
+            self.parser.printError("Expect expression.");
+            return;
+        }
+        while (@intFromEnum(precedence) <= @intFromEnum(getRule(self.parser.current.type).precedence)) {
+            self.parser.advance();
+            if (getRule(self.parser.previous.type).infix) |infixFn| {
+                try infixFn(self, canAssign);
+            }
+        }
+        if (canAssign and self.parser.match(.TOKEN_EQUAL)) {
+            self.parser.printError("Invalid assignment target.");
+        }
+    }
+    pub fn declaration(self: *Compiler) std.mem.Allocator.Error!void {
+        if (self.parser.match(.TOKEN_FUN)) {
+            try self.funDeclaration();
+        } else if (self.parser.match(.TOKEN_VAR)) {
+            try self.varDeclaration();
+        } else {
+            try self.statement();
+        }
+        if (self.parser.panicMode) {
+            self.parser.synchronize();
+        }
+    }
+    fn funDeclaration(self: *Compiler) std.mem.Allocator.Error!void {
+        const global = try self.parseVariable("Expect function name.");
+        self.markInitialized();
+        try self.fun(.FUNCTION);
+        try self.defineVariable(global);
+    }
+    fn varDeclaration(self: *Compiler) std.mem.Allocator.Error!void {
+        const global = try self.parseVariable("Expect variable name.");
+        if (self.parser.match(.TOKEN_EQUAL)) {
+            try self.expression();
+        } else {
+            try self.emitByte(.{ .instruction = .OP_NIL });
+        }
+        self.parser.consume(.TOKEN_SEMICOLON, "Expect ';' after variable declaration.");
+        try self.defineVariable(global);
+    }
+    fn statement(self: *Compiler) std.mem.Allocator.Error!void {
+        if (self.parser.match(.TOKEN_PRINT)) {
+            try self.printStatement();
+        } else if (self.parser.match(.TOKEN_IF)) {
+            try self.ifStatement();
+        } else if (self.parser.match(.TOKEN_RETURN)) {
+            try self.returnStatement();
+        } else if (self.parser.match(.TOKEN_WHILE)) {
+            try self.whileStatement();
+        } else if (self.parser.match(.TOKEN_FOR)) {
+            try self.forStatement();
+        } else if (self.parser.match(.TOKEN_LEFT_BRACE)) {
+            self.beginScope();
+            try self.block();
+            try self.endScope();
+        } else {
+            try self.expressionStatement();
+        }
+    }
+    fn beginScope(self: *Compiler) void {
+        self.scopeDepth += 1;
+    }
+    fn endScope(self: *Compiler) !void {
+        self.scopeDepth -= 1;
+        while (self.localCount > 0 and self.locals[self.localCount - 1].depth > self.scopeDepth) {
+            try self.emitByte(.{ .instruction = .OP_POP });
+            self.localCount -= 1;
+        }
+    }
+    fn printStatement(self: *Compiler) std.mem.Allocator.Error!void {
+        try self.expression();
+        self.parser.consume(.TOKEN_SEMICOLON, "Expect ';' after value.");
+        try self.emitByte(.{ .instruction = .OP_PRINT });
+    }
+    fn ifStatement(self: *Compiler) std.mem.Allocator.Error!void {
+        self.parser.consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'if'.");
+        try self.expression();
+        self.parser.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+        const thenJump = try self.emitJump(.OP_JUMP_IF_FALSE);
+        try self.emitByte(.{ .instruction = .OP_POP });
+        try self.statement();
+
+        const elseJump = try self.emitJump(.OP_JUMP);
+        self.patchJump(thenJump);
+
+        try self.emitByte(.{ .instruction = .OP_POP });
+        if (self.parser.match(.TOKEN_ELSE)) {
+            try self.statement();
+        }
+        self.patchJump(elseJump);
+    }
+    fn returnStatement(self: *Compiler) std.mem.Allocator.Error!void {
+        if (self.scopeDepth == 0) {
+            self.parser.printError("Can't return from top-level code.");
+            return;
+        }
+        if (self.parser.match(.TOKEN_SEMICOLON)) {
+            try self.emitReturn();
+        } else {
+            try self.expression();
+            self.parser.consume(.TOKEN_SEMICOLON, "Expect ';' after return value.");
+            try self.emitByte(.{ .instruction = .OP_RETURN });
+        }
+    }
+    fn whileStatement(self: *Compiler) std.mem.Allocator.Error!void {
+        const loopStart = self.function.chunk.count;
+        self.parser.consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'while'.");
+        try self.expression();
+        self.parser.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after condition.");
+
+        const exitJump = try self.emitJump(.OP_JUMP_IF_FALSE);
+        try self.emitByte(.{ .instruction = .OP_POP });
+        try self.statement();
+        try self.emitLoop(loopStart);
+
+        self.patchJump(exitJump);
+        try self.emitByte(.{ .instruction = .OP_POP });
+    }
+    fn forStatement(self: *Compiler) std.mem.Allocator.Error!void {
+        self.beginScope();
+
+        self.parser.consume(.TOKEN_LEFT_PAREN, "Expect '(' after 'for'.");
+        if (self.parser.match(.TOKEN_SEMICOLON)) {
+            // No initializer.
+        } else if (self.parser.match(.TOKEN_VAR)) {
+            try self.varDeclaration();
+        } else {
+            try self.expressionStatement();
+        }
+
+        var loopStart = self.function.chunk.count;
+
+        var exitJump: ?usize = null;
+        if (!self.parser.match(.TOKEN_SEMICOLON)) {
+            try self.expression();
+            self.parser.consume(.TOKEN_SEMICOLON, "Expect ';' after 'for' condition.");
+
+            exitJump = try self.emitJump(.OP_JUMP_IF_FALSE);
+            try self.emitByte(.{ .instruction = .OP_POP });
+        }
+
+        if (!self.parser.match(.TOKEN_RIGHT_PAREN)) {
+            const bodyJump = try self.emitJump(.OP_JUMP);
+            const incrementStart = self.function.chunk.count;
+            try self.expression();
+            try self.emitByte(.{ .instruction = .OP_POP });
+            self.parser.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after 'for' clauses.");
+
+            try self.emitLoop(loopStart);
+            loopStart = incrementStart;
+            self.patchJump(bodyJump);
+        }
+        try self.statement();
+        try self.emitLoop(loopStart);
+
+        if (exitJump) |j| {
+            self.patchJump(j);
+            try self.emitByte(.{ .instruction = .OP_POP });
+        }
+
+        try self.endScope();
+    }
+    fn expressionStatement(self: *Compiler) std.mem.Allocator.Error!void {
+        try self.expression();
+        self.parser.consume(.TOKEN_SEMICOLON, "Expect ';' after expression.");
+        try self.emitByte(.{ .instruction = .OP_POP });
+    }
+    fn block(self: *Compiler) std.mem.Allocator.Error!void {
+        while (!self.parser.check(.TOKEN_RIGHT_BRACE) and !self.parser.check(.TOKEN_EOF)) {
+            try self.declaration();
+        }
+        self.parser.consume(.TOKEN_RIGHT_BRACE, "Expect '}' after block.");
+    }
+    fn fun(self: *Compiler, fnType: FunctionType) std.mem.Allocator.Error!void {
+        var compiler = Compiler.default;
+        try compiler.init(self.parser, fnType, self.strings);
+        compiler.beginScope();
+        compiler.parser.consume(.TOKEN_LEFT_PAREN, "Expect '(' after function name.");
+        if (!compiler.parser.check(.TOKEN_RIGHT_PAREN)) {
+            while (true) {
+                compiler.function.arity += 1;
+                if (compiler.function.arity == 255) {
+                    compiler.parser.printErrorAtCurrent("Can't have more than 255 parameters.");
+                }
+                const constant = try compiler.parseVariable("Expect parameter name.");
+                try compiler.defineVariable(constant);
+                if (!compiler.parser.match(.TOKEN_COMMA)) break;
+            }
+        }
+        compiler.parser.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after parameters.");
+        compiler.parser.consume(.TOKEN_LEFT_BRACE, "Expect '{' before function body.");
+        try compiler.block();
+        const function = try compiler.end();
+        const constant = try self.makeConstant(val.Value.objVal(&function.obj));
+        try self.emitBytes(.{ .instruction = .OP_CONSTANT }, .{ .constant = constant });
+    }
+    fn expression(self: *Compiler) std.mem.Allocator.Error!void {
+        try self.parsePrecedence(.ASSIGNMENT);
+    }
+    fn binary(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        _ = canAssign;
+        const operatorType = self.parser.previous.type;
+        const rule = getRule(operatorType);
+        try self.parsePrecedence(@enumFromInt(@intFromEnum(rule.precedence) + 1));
+        switch (operatorType) {
+            .TOKEN_BANG_EQUAL => try self.emitBytes(.{ .instruction = .OP_EQUAL }, .{ .instruction = .OP_NOT }),
+            .TOKEN_EQUAL_EQUAL => try self.emitByte(.{ .instruction = .OP_EQUAL }),
+            .TOKEN_GREATER => try self.emitByte(.{ .instruction = .OP_GREATER }),
+            .TOKEN_GREATER_EQUAL => try self.emitBytes(.{ .instruction = .OP_LESS }, .{ .instruction = .OP_NOT }),
+            .TOKEN_LESS => try self.emitByte(.{ .instruction = .OP_LESS }),
+            .TOKEN_LESS_EQUAL => try self.emitBytes(.{ .instruction = .OP_GREATER }, .{ .instruction = .OP_NOT }),
+            .TOKEN_PLUS => try self.emitByte(.{ .instruction = .OP_ADD }),
+            .TOKEN_MINUS => try self.emitByte(.{ .instruction = .OP_SUBTRACT }),
+            .TOKEN_STAR => try self.emitByte(.{ .instruction = .OP_MULTIPLY }),
+            .TOKEN_SLASH => try self.emitByte(.{ .instruction = .OP_DIVIDE }),
+            else => unreachable,
+        }
+    }
+    fn and_(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        _ = canAssign;
+        const endJump = try self.emitJump(.OP_JUMP_IF_FALSE);
+        try self.emitByte(.{ .instruction = .OP_POP });
+        try self.parsePrecedence(.AND);
+        self.patchJump(endJump);
+    }
+    fn or_(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        _ = canAssign;
+        const elseJump = try self.emitJump(.OP_JUMP_IF_FALSE);
+        const endJump = try self.emitJump(.OP_JUMP);
+        self.patchJump(elseJump);
+        try self.emitByte(.{ .instruction = .OP_POP });
+        try self.parsePrecedence(.OR);
+        self.patchJump(endJump);
+    }
+    fn call(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        _ = canAssign;
+        const argCount = try self.argumentsList();
+        try self.emitBytes(.{ .instruction = .OP_CALL }, .{ .constant = argCount });
+    }
+    fn argumentsList(self: *Compiler) std.mem.Allocator.Error!u8 {
+        var argCount: u8 = 0;
+        if (!self.parser.check(.TOKEN_RIGHT_PAREN)) {
+            while (true) {
+                try self.expression();
+                argCount += 1;
+                if (argCount == 255) {
+                    self.parser.printErrorAtCurrent("Can't have more than 255 arguments.");
+                }
+                if (!self.parser.match(.TOKEN_COMMA)) break;
+            }
+        }
+        self.parser.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after arguments.");
+        return argCount;
+    }
+    fn grouping(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        _ = canAssign;
+        try self.expression();
+        self.parser.consume(.TOKEN_RIGHT_PAREN, "Expect ')' after expression.");
+    }
+    fn literal(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        _ = canAssign;
+        switch (self.parser.previous.type) {
+            .TOKEN_NIL => try self.emitByte(.{ .instruction = .OP_NIL }),
+            .TOKEN_TRUE => try self.emitByte(.{ .instruction = .OP_TRUE }),
+            .TOKEN_FALSE => try self.emitByte(.{ .instruction = .OP_FALSE }),
+            else => unreachable,
+        }
+    }
+    fn number(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        _ = canAssign;
+        const value: val.Number = std.fmt.parseFloat(val.Number, self.parser.previous.lexeme) catch unreachable;
+        try self.emitConstant(val.Value.numberVal(value));
+    }
+    fn string(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        _ = canAssign;
+        const object = try self.strings.copyString(self.parser.previous.lexeme[1 .. self.parser.previous.lexeme.len - 1]);
+        try self.emitConstant(val.Value.objVal(object));
+    }
+    fn unary(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        _ = canAssign;
+        const operatorType = self.parser.previous.type;
+        try self.parsePrecedence(.UNARY);
+        switch (operatorType) {
+            .TOKEN_BANG => try self.emitByte(.{ .instruction = .OP_NOT }),
+            .TOKEN_MINUS => try self.emitByte(.{ .instruction = .OP_NEGATE }),
+            else => unreachable,
+        }
+    }
+    fn variable(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        try self.namedVariable(self.parser.previous, canAssign);
+    }
+    fn namedVariable(self: *Compiler, name: scn.Token, canAssign: bool) std.mem.Allocator.Error!void {
+        var getOp: chk.Instruction = undefined;
+        var setOp: chk.Instruction = undefined;
+        const arg: u8 = if (self.resolveLocal(name)) |depth| blk: {
+            getOp = .OP_GET_LOCAL;
+            setOp = .OP_SET_LOCAL;
+            break :blk @intCast(depth);
+        } else blk: {
+            getOp = .OP_GET_GLOBAL;
+            setOp = .OP_SET_GLOBAL;
+            break :blk try self.identifierConstant(name);
+        };
+        if (canAssign and self.parser.match(.TOKEN_EQUAL)) {
+            try self.expression();
+            try self.emitBytes(.{ .instruction = setOp }, .{ .constant = arg });
+        } else {
+            try self.emitBytes(.{ .instruction = getOp }, .{ .constant = arg });
+        }
+    }
+    fn parseVariable(self: *Compiler, message: []const u8) std.mem.Allocator.Error!u8 {
+        self.parser.consume(.TOKEN_IDENTIFIER, message);
+        self.declareVariable();
+        if (self.scopeDepth > 0) return 0;
+        return try self.identifierConstant(self.parser.previous);
+    }
+    fn identifierConstant(self: *Compiler, name: scn.Token) std.mem.Allocator.Error!u8 {
+        const str = try self.strings.copyString(name.lexeme);
+        return try self.makeConstant(val.Value.objVal(str));
+    }
+    fn makeConstant(self: *Compiler, value: val.Value) std.mem.Allocator.Error!u8 {
+        const constant = try self.function.chunk.addConstant(value);
+        if (constant > std.math.maxInt(u8)) {
+            self.parser.printError("Too many constants in one chunk.");
+            return 0;
+        }
+        return @intCast(constant);
+    }
+    fn declareVariable(self: *Compiler) void {
+        if (self.scopeDepth == 0) {
+            return;
+        }
+        const name = self.parser.previous;
+        if (self.localCount > 0) {
+            for (1..self.localCount) |i| {
+                const local = &self.locals[self.localCount - i];
+                if (local.depth != -1 and local.depth < self.scopeDepth) {
+                    break;
+                }
+                if (name.identifiersEqual(local.name)) {
+                    self.parser.printError("Already a variable with this name in this scope.");
+                }
+            }
+        }
+        self.addLocal(name);
+    }
+    fn defineVariable(self: *Compiler, global: u8) std.mem.Allocator.Error!void {
+        if (self.scopeDepth > 0) {
+            self.markInitialized();
+            return;
+        }
+        try self.emitBytes(.{ .instruction = .OP_DEFINE_GLOBAL }, .{ .constant = global });
+    }
+    fn emitConstant(self: *Compiler, value: val.Value) std.mem.Allocator.Error!void {
+        const constant = try self.makeConstant(value);
+        try self.emitBytes(.{ .instruction = .OP_CONSTANT }, .{ .constant = constant });
+    }
+    fn emitReturn(self: *Compiler) std.mem.Allocator.Error!void {
+        try self.emitByte(.{ .instruction = .OP_NIL });
+        try self.emitByte(.{ .instruction = .OP_RETURN });
+    }
+    fn emitLoop(self: *Compiler, loopStart: usize) std.mem.Allocator.Error!void {
+        try self.emitByte(.{ .instruction = .OP_LOOP });
+        const offset = self.function.chunk.count - loopStart + 2;
+        if (offset > std.math.maxInt(u16)) {
+            self.parser.printError("Loop body too large.");
+        }
+        try self.emitBytes(.{ .constant = @intCast((offset >> 8) & 0xff) }, .{ .constant = @intCast(offset & 0xff) });
+    }
+    fn emitJump(self: *Compiler, instruction: chk.Instruction) std.mem.Allocator.Error!usize {
+        try self.emitByte(.{ .instruction = instruction });
+        try self.emitByte(.{ .constant = 0xff });
+        try self.emitByte(.{ .constant = 0xff });
+        return self.function.chunk.count - 2;
+    }
+    fn patchJump(self: *Compiler, offset: usize) void {
+        const jump = self.function.chunk.count - offset - 2;
+        if (jump > std.math.maxInt(u16)) {
+            self.parser.printError("Too much code to jump over.");
+        }
+        self.function.chunk.code[offset] = .{ .constant = @intCast(jump >> 8) };
+        self.function.chunk.code[offset + 1] = .{ .constant = @intCast(jump & 0xff) };
+    }
+    fn emitBytes(self: *Compiler, opCode1: chk.OpCode, opCode2: chk.OpCode) std.mem.Allocator.Error!void {
+        try self.emitByte(opCode1);
+        try self.emitByte(opCode2);
+    }
+    fn emitByte(self: *Compiler, opCode: chk.OpCode) std.mem.Allocator.Error!void {
+        try self.function.chunk.write(opCode, self.parser.previous.line);
+    }
+    fn addLocal(self: *Compiler, name: scn.Token) void {
+        if (self.localCount == std.math.maxInt(u8) + 1) {
+            self.parser.printError("Too many local variables in function.");
+            return;
+        }
+        const local = &self.locals[self.localCount];
+        local.name = name;
+        local.depth = -1;
+        self.localCount += 1;
+    }
+    fn markInitialized(self: *Compiler) void {
+        if (self.scopeDepth == 0) {
+            return;
+        }
+        self.locals[self.localCount - 1].depth = @intCast(self.scopeDepth);
+    }
+    fn resolveLocal(self: *Compiler, name: scn.Token) ?usize {
+        if (self.localCount == 0) {
+            return null;
+        }
+        for (1..self.localCount + 1) |i| {
+            const local = &self.locals[self.localCount - i];
+            if (name.identifiersEqual(local.name)) {
+                if (local.depth == -1) {
+                    self.parser.printError("Can't read local variable in its own initializer.");
+                }
+                return self.localCount - i;
+            }
+        }
+        return null;
+    }
+};
+
+pub fn compile(source: []const u8, strings: *tbl.Table) !*obj.ObjFunction {
     var scanner = scn.Scanner.default;
     scanner.init(source);
     var parser = Parser.default;
-    parser.scanner = scanner;
-    parser.chunk = chunk;
+    parser.scanner = &scanner;
+    var compiler = Compiler.default;
+    try compiler.init(&parser, .SCRIPT, strings);
+
     parser.advance();
     while (!parser.match(.TOKEN_EOF)) {
-        try parser.declaration();
+        try compiler.declaration();
     }
-    try parser.endCompiler();
+
+    const function = try compiler.end();
     if (parser.hadError) {
         return error.CompileError;
     }
+    return function;
 }

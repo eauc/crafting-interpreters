@@ -15,21 +15,24 @@ pub const Table = struct {
     count: usize,
     capacity: usize,
     entries: []Entry,
-    pub const default = .{
+    objects: *obj.ObjsList,
+    pub const default = Table{
         .allocator = undefined,
         .count = 0,
         .capacity = 0,
         .entries = &[_]Entry{},
+        .objects = undefined,
     };
-    pub fn init(self: *Table, allocator: std.mem.Allocator) void {
+    pub fn init(self: *Table, allocator: std.mem.Allocator, objects: *obj.ObjsList) void {
         self.allocator = allocator;
         self.count = 0;
         self.capacity = 0;
         self.entries = &[_]Entry{};
+        self.objects = objects;
     }
     pub fn free(self: *Table) void {
         self.allocator.free(self.entries);
-        self.init(self.allocator);
+        self.init(self.allocator, self.objects);
     }
     pub fn get(self: *Table, key: *obj.ObjString, value: *val.Value) bool {
         if (self.count == 0) return false;
@@ -108,6 +111,40 @@ pub const Table = struct {
         self.allocator.free(self.entries);
         self.entries = entries;
         self.capacity = capacity;
+    }
+    pub fn concatenateStrings(self: *Table, a: *obj.ObjString, b: *obj.ObjString) !*obj.Obj {
+        const length = a.length + b.length;
+        const chars: [:0]u8 = @ptrCast(try self.allocator.alloc(u8, length + 1));
+
+        std.mem.copyForwards(u8, chars, a.chars);
+        std.mem.copyForwards(u8, chars[a.length..], b.chars);
+        chars[length] = 0;
+
+        const string = try obj.ObjString.create(self.allocator, chars);
+        const interned = self.findString(chars, string.hash);
+        if (interned) |existing_string| {
+            string.obj.free();
+            return &existing_string.obj;
+        }
+        return self.addString(string);
+    }
+    pub fn copyString(self: *Table, chars: []const u8) !*obj.Obj {
+        const heapChars: [:0]u8 = @ptrCast(try self.allocator.alloc(u8, chars.len + 1));
+        std.mem.copyForwards(u8, heapChars, chars);
+        heapChars[chars.len] = 0;
+
+        const string = try obj.ObjString.create(self.allocator, heapChars);
+        const interned = self.findString(heapChars, string.hash);
+        if (interned) |existing_string| {
+            string.obj.free();
+            return &existing_string.obj;
+        }
+        return self.addString(string);
+    }
+    pub fn addString(self: *Table, string: *obj.ObjString) !*obj.Obj {
+        self.objects.add(&string.obj);
+        _ = try self.set(string, val.Value.nilVal());
+        return &string.obj;
     }
 };
 
