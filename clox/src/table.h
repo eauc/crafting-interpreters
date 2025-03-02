@@ -23,4 +23,7 @@ bool tableDelete(Table *table, ObjString *key);
 void tableAddAll(Table *from, Table *to);
 ObjString *tableFindString(Table *table, const char *chars, size_t length, size_t hash);
 
+void tableRemoveWhite(Table *table);
+void markTable(Table *table);
+
 #endif
