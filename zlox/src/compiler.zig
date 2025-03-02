@@ -182,6 +182,16 @@ fn getRule(tokenType: scn.TokenType) ParseRule {
 const Local = struct {
     name: scn.Token,
     depth: isize,
+    isCaptured: bool,
+};
+
+pub const Upvalue = struct {
+    pub const Type = enum {
+        LOCAL,
+        UPVALUE,
+    };
+    index: u8,
+    isLocal: Type,
 };
 
 const Parser = struct {
@@ -264,20 +274,24 @@ const FunctionType = enum {
 };
 
 const Compiler = struct {
+    enclosing: ?*Compiler,
     parser: *Parser,
     strings: *tbl.Table,
     function: *obj.ObjFunction,
     type: FunctionType,
     locals: [std.math.maxInt(u8) + 1]Local,
     localCount: usize,
+    upvalues: [std.math.maxInt(u8) + 1]Upvalue,
     scopeDepth: usize,
     const default = Compiler{
+        .enclosing = null,
         .parser = undefined,
         .strings = undefined,
         .function = undefined,
         .type = .SCRIPT,
         .locals = undefined,
         .localCount = 0,
+        .upvalues = undefined,
         .scopeDepth = 0,
     };
     pub fn init(self: *Compiler, parser: *Parser, fnType: FunctionType, strings: *tbl.Table) !void {
@@ -295,6 +309,7 @@ const Compiler = struct {
                 .line = 0,
             },
             .depth = 0,
+            .isCaptured = false,
         };
         self.localCount = 1;
         self.scopeDepth = 0;
@@ -381,7 +396,11 @@ const Compiler = struct {
     fn endScope(self: *Compiler) !void {
         self.scopeDepth -= 1;
         while (self.localCount > 0 and self.locals[self.localCount - 1].depth > self.scopeDepth) {
-            try self.emitByte(.{ .instruction = .OP_POP });
+            if (self.locals[self.localCount - 1].isCaptured) {
+                try self.emitByte(.{ .instruction = .OP_CLOSE_UPVALUE });
+            } else {
+                try self.emitByte(.{ .instruction = .OP_POP });
+            }
             self.localCount -= 1;
         }
     }
@@ -493,6 +512,7 @@ const Compiler = struct {
     fn fun(self: *Compiler, fnType: FunctionType) std.mem.Allocator.Error!void {
         var compiler = Compiler.default;
         try compiler.init(self.parser, fnType, self.strings);
+        compiler.enclosing = self;
         compiler.beginScope();
         compiler.parser.consume(.TOKEN_LEFT_PAREN, "Expect '(' after function name.");
         if (!compiler.parser.check(.TOKEN_RIGHT_PAREN)) {
@@ -511,7 +531,14 @@ const Compiler = struct {
         try compiler.block();
         const function = try compiler.end();
         const constant = try self.makeConstant(val.Value.objVal(&function.obj));
-        try self.emitBytes(.{ .instruction = .OP_CONSTANT }, .{ .constant = constant });
+        try self.emitBytes(.{ .instruction = .OP_CLOSURE }, .{ .constant = constant });
+        for (0..function.upvalueCount) |i| {
+            try self.emitByte(.{ .constant = switch (compiler.upvalues[i].isLocal) {
+                .LOCAL => 1,
+                .UPVALUE => 0,
+            } });
+            try self.emitByte(.{ .constant = compiler.upvalues[i].index });
+        }
     }
     fn expression(self: *Compiler) std.mem.Allocator.Error!void {
         try self.parsePrecedence(.ASSIGNMENT);
@@ -615,6 +642,10 @@ const Compiler = struct {
             getOp = .OP_GET_LOCAL;
             setOp = .OP_SET_LOCAL;
             break :blk @intCast(depth);
+        } else if (self.resolveUpvalue(name)) |index| blk: {
+            getOp = .OP_GET_UPVALUE;
+            setOp = .OP_SET_UPVALUE;
+            break :blk @intCast(index);
         } else blk: {
             getOp = .OP_GET_GLOBAL;
             setOp = .OP_SET_GLOBAL;
@@ -715,6 +746,7 @@ const Compiler = struct {
         const local = &self.locals[self.localCount];
         local.name = name;
         local.depth = -1;
+        local.isCaptured = false;
         self.localCount += 1;
     }
     fn markInitialized(self: *Compiler) void {
@@ -737,6 +769,35 @@ const Compiler = struct {
             }
         }
         return null;
+    }
+    fn resolveUpvalue(self: *Compiler, name: scn.Token) ?usize {
+        if (self.enclosing) |enclosing| {
+            if (enclosing.resolveLocal(name)) |local| {
+                enclosing.locals[local].isCaptured = true;
+                return self.addUpvalue(local, .LOCAL);
+            }
+            if (enclosing.resolveUpvalue(name)) |upvalue| {
+                return self.addUpvalue(upvalue, .UPVALUE);
+            }
+        }
+        return null;
+    }
+    fn addUpvalue(self: *Compiler, index: usize, isLocal: Upvalue.Type) usize {
+        const upvalueCount = self.function.upvalueCount;
+        for (0..upvalueCount) |i| {
+            const upvalue = self.upvalues[i];
+            if (upvalue.index == index and upvalue.isLocal == isLocal) {
+                return i;
+            }
+        }
+        if (upvalueCount == std.math.maxInt(u8) + 1) {
+            self.parser.printError("Too many closure variables in function.");
+            return 0;
+        }
+        self.upvalues[upvalueCount].isLocal = isLocal;
+        self.upvalues[upvalueCount].index = @intCast(index);
+        self.function.upvalueCount += 1;
+        return upvalueCount;
     }
 };
 

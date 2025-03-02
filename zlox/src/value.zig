@@ -58,6 +58,9 @@ pub const Value = struct {
     pub fn isObjType(self: Value, expectedObjType: obj.ObjType) bool {
         return self.isObj() and self.objType() == expectedObjType;
     }
+    pub fn isClosure(self: Value) bool {
+        return self.isObjType(.CLOSURE);
+    }
     pub fn isFunction(self: Value) bool {
         return self.isObjType(.FUNCTION);
     }
@@ -75,6 +78,9 @@ pub const Value = struct {
     }
     pub fn asObj(self: Value) *obj.Obj {
         return self.as.OBJ;
+    }
+    pub fn asClosure(self: Value) *obj.ObjClosure {
+        return @fieldParentPtr("obj", self.asObj());
     }
     pub fn asFunction(self: Value) *obj.ObjFunction {
         return @fieldParentPtr("obj", self.asObj());

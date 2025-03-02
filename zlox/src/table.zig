@@ -114,11 +114,10 @@ pub const Table = struct {
     }
     pub fn concatenateStrings(self: *Table, a: *obj.ObjString, b: *obj.ObjString) !*obj.Obj {
         const length = a.length + b.length;
-        const chars: [:0]u8 = @ptrCast(try self.allocator.alloc(u8, length + 1));
+        const chars = try self.allocator.alloc(u8, length);
 
         std.mem.copyForwards(u8, chars, a.chars);
         std.mem.copyForwards(u8, chars[a.length..], b.chars);
-        chars[length] = 0;
 
         const string = try obj.ObjString.create(self.allocator, chars);
         const interned = self.findString(chars, string.hash);
@@ -129,9 +128,8 @@ pub const Table = struct {
         return self.addString(string);
     }
     pub fn copyString(self: *Table, chars: []const u8) !*obj.Obj {
-        const heapChars: [:0]u8 = @ptrCast(try self.allocator.alloc(u8, chars.len + 1));
+        const heapChars = try self.allocator.alloc(u8, chars.len);
         std.mem.copyForwards(u8, heapChars, chars);
-        heapChars[chars.len] = 0;
 
         const string = try obj.ObjString.create(self.allocator, heapChars);
         const interned = self.findString(heapChars, string.hash);
