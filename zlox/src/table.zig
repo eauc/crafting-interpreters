@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = @import("memory.zig");
 const obj = @import("object.zig");
 const val = @import("value.zig");
+const vm = @import("vm.zig");
 
 const TABLE_MAX_LOAD = 0.75;
 
@@ -11,28 +12,28 @@ const Entry = struct {
 };
 
 pub const Table = struct {
-    allocator: std.mem.Allocator,
+    allocator: *mem.Allocator,
+    stack: *vm.Stack,
     count: usize,
     capacity: usize,
     entries: []Entry,
-    objects: *obj.ObjsList,
     pub const default = Table{
         .allocator = undefined,
+        .stack = undefined,
         .count = 0,
         .capacity = 0,
         .entries = &[_]Entry{},
-        .objects = undefined,
     };
-    pub fn init(self: *Table, allocator: std.mem.Allocator, objects: *obj.ObjsList) void {
+    pub fn init(self: *Table, allocator: *mem.Allocator, stack: *vm.Stack) void {
         self.allocator = allocator;
+        self.stack = stack;
         self.count = 0;
         self.capacity = 0;
         self.entries = &[_]Entry{};
-        self.objects = objects;
     }
     pub fn free(self: *Table) void {
-        self.allocator.free(self.entries);
-        self.init(self.allocator, self.objects);
+        self.allocator.free(Entry, self.entries);
+        self.init(self.allocator, self.stack);
     }
     pub fn get(self: *Table, key: *obj.ObjString, value: *val.Value) bool {
         if (self.count == 0) return false;
@@ -108,7 +109,7 @@ pub const Table = struct {
                 self.count += 1;
             }
         }
-        self.allocator.free(self.entries);
+        self.allocator.free(Entry, self.entries);
         self.entries = entries;
         self.capacity = capacity;
     }
@@ -119,30 +120,53 @@ pub const Table = struct {
         std.mem.copyForwards(u8, chars, a.chars);
         std.mem.copyForwards(u8, chars[a.length..], b.chars);
 
-        const string = try obj.ObjString.create(self.allocator, chars);
-        const interned = self.findString(chars, string.hash);
+        const hash = hashString(chars);
+        const interned = self.findString(chars, hash);
         if (interned) |existing_string| {
-            string.obj.free();
+            self.allocator.free(u8, chars);
             return &existing_string.obj;
         }
+
+        const string = try obj.ObjString.create(self.allocator, chars, hash);
         return self.addString(string);
     }
     pub fn copyString(self: *Table, chars: []const u8) !*obj.Obj {
+        const hash = hashString(chars);
+        const interned = self.findString(chars, hash);
+        if (interned) |existing_string| {
+            return &existing_string.obj;
+        }
+
         const heapChars = try self.allocator.alloc(u8, chars.len);
         std.mem.copyForwards(u8, heapChars, chars);
 
-        const string = try obj.ObjString.create(self.allocator, heapChars);
-        const interned = self.findString(heapChars, string.hash);
-        if (interned) |existing_string| {
-            string.obj.free();
-            return &existing_string.obj;
-        }
+        const string = try obj.ObjString.create(self.allocator, heapChars, hash);
         return self.addString(string);
     }
     pub fn addString(self: *Table, string: *obj.ObjString) !*obj.Obj {
-        self.objects.add(&string.obj);
+        self.stack.push(val.Value.objVal(&string.obj));
         _ = try self.set(string, val.Value.nilVal());
+        _ = self.stack.pop();
         return &string.obj;
+    }
+    pub fn markEntries(self: *Table) void {
+        for (0..self.capacity) |i| {
+            const entry = &self.entries[i];
+            if (entry.key) |key| {
+                key.obj.mark();
+            }
+            entry.value.mark();
+        }
+    }
+    pub fn removeWhite(self: *Table) void {
+        for (0..self.capacity) |i| {
+            const entry = &self.entries[i];
+            if (entry.key) |key| {
+                if (!key.obj.isMarked) {
+                    _ = self.delete(key);
+                }
+            }
+        }
     }
 };
 
@@ -164,4 +188,13 @@ fn findEntry(entries: []Entry, capacity: usize, key: *obj.ObjString) *Entry {
         }
         index = (index + 1) % capacity;
     }
+}
+
+fn hashString(chars: []const u8) usize {
+    var hash: usize = 2166136261;
+    for (chars) |char| {
+        hash ^= char;
+        hash *%= 16777619;
+    }
+    return hash;
 }

@@ -110,6 +110,11 @@ pub const Value = struct {
             .OBJ => return self.as.OBJ == other.as.OBJ,
         }
     }
+    pub fn mark(self: Value) void {
+        if (self.isObj()) {
+            self.asObj().mark();
+        }
+    }
 };
 
 pub fn printValue(value: Value) void {
@@ -122,7 +127,7 @@ pub fn printValue(value: Value) void {
 }
 
 pub const ValueArray = struct {
-    allocator: std.mem.Allocator,
+    allocator: *mem.Allocator,
     count: usize,
     values: []Value,
     pub const default: ValueArray = .{
@@ -130,13 +135,13 @@ pub const ValueArray = struct {
         .count = 0,
         .values = &[_]Value{},
     };
-    pub fn init(self: *ValueArray, allocator: std.mem.Allocator) void {
+    pub fn init(self: *ValueArray, allocator: *mem.Allocator) void {
         self.allocator = allocator;
         self.count = 0;
         self.values = &[_]Value{};
     }
     pub fn free(self: *ValueArray) void {
-        self.allocator.free(self.values);
+        self.allocator.free(Value, self.values);
     }
     pub fn write(self: *ValueArray, value: Value) !void {
         if (self.values.len < self.count + 1) {
@@ -146,5 +151,10 @@ pub const ValueArray = struct {
         }
         self.values[self.count] = value;
         self.count += 1;
+    }
+    pub fn mark(self: ValueArray) void {
+        for (0..self.count) |i| {
+            self.values[i].mark();
+        }
     }
 };

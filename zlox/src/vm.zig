@@ -2,6 +2,7 @@ const std = @import("std");
 const chk = @import("chunk.zig");
 const cmp = @import("compiler.zig");
 const dbg = @import("debug.zig");
+const mem = @import("memory.zig");
 const obj = @import("object.zig");
 const tbl = @import("table.zig");
 const val = @import("value.zig");
@@ -21,7 +22,7 @@ const CallFrame = struct {
     returnStackTop: usize,
 };
 
-const Stack = struct {
+pub const Stack = struct {
     stack: [STACK_MAX]val.Value,
     stackTop: usize,
     openUpvalues: ?*obj.ObjUpvalue,
@@ -65,10 +66,22 @@ const Stack = struct {
         }
         dbg.traceExecution("\n", .{});
     }
+    pub fn markValues(self: *Stack) void {
+        for (0..self.stackTop) |i| {
+            self.stack[i].mark();
+        }
+    }
+    pub fn markUpvalues(self: *Stack) void {
+        var currentUpvalue = self.openUpvalues;
+        while (currentUpvalue) |upvalue| {
+            upvalue.obj.mark();
+            currentUpvalue = upvalue.next;
+        }
+    }
 };
 
 pub const VM = struct {
-    allocator: std.mem.Allocator,
+    allocator: *mem.Allocator,
     frames: [FRAME_MAX]CallFrame,
     frameCount: usize,
     stack: Stack,
@@ -85,10 +98,11 @@ pub const VM = struct {
         .strings = tbl.Table.default,
         .objects = obj.ObjsList.default,
     };
-    pub fn init(self: *VM, allocator: std.mem.Allocator) !void {
+    pub fn init(self: *VM, allocator: *mem.Allocator) !void {
         self.allocator = allocator;
-        self.globals.init(allocator, &self.objects);
-        self.strings.init(allocator, &self.objects);
+        self.allocator.vm = self;
+        self.globals.init(allocator, &self.stack);
+        self.strings.init(allocator, &self.stack);
         try self.defineNative("clock", clockNative);
     }
     pub fn free(self: *VM) void {
@@ -97,7 +111,7 @@ pub const VM = struct {
         self.objects.free();
     }
     pub fn interpret(self: *VM, source: []const u8) !void {
-        const function = cmp.compile(source, &self.strings) catch {
+        const function = cmp.compile(source, self.allocator, &self.stack, &self.strings) catch {
             return InterpretError.CompileError;
         };
         defer function.obj.free();
@@ -157,9 +171,11 @@ pub const VM = struct {
                 },
                 .OP_ADD => {
                     if (self.stack.peek(0).isString() and self.stack.peek(1).isString()) {
-                        const b = self.stack.pop().asString();
-                        const a = self.stack.pop().asString();
+                        const b = self.stack.peek(0).asString();
+                        const a = self.stack.peek(1).asString();
                         const object = try self.strings.concatenateStrings(a, b);
+                        _ = self.stack.pop();
+                        _ = self.stack.pop();
                         self.stack.push(val.Value.objVal(object));
                     } else if (self.stack.peek(0).isNumber() and self.stack.peek(1).isNumber()) {
                         const b = self.stack.pop().asNumber();
@@ -254,6 +270,7 @@ pub const VM = struct {
                                 upvalue.* = frame.closure.upvalues[index];
                             },
                         }
+                        closure.upvalueCount += 1;
                     }
                 },
                 .OP_CLOSE_UPVALUE => {
@@ -362,6 +379,17 @@ pub const VM = struct {
             .returnStackTop = self.stack.stackTop - argCount - 1,
         };
         self.frameCount += 1;
+    }
+    fn markFrames(self: *VM) void {
+        for (0..self.frameCount) |i| {
+            self.frames[i].closure.obj.mark();
+        }
+    }
+    pub fn markRoots(self: *VM) void {
+        self.stack.markValues();
+        self.stack.markUpvalues();
+        self.globals.markEntries();
+        self.markFrames();
     }
     fn readString(self: *VM) *obj.ObjString {
         return self.readConstant().asString();

@@ -1,10 +1,12 @@
 const std = @import("std");
 const chk = @import("chunk.zig");
 const dbg = @import("debug.zig");
+const mem = @import("memory.zig");
 const obj = @import("object.zig");
 const scn = @import("scanner.zig");
 const tbl = @import("table.zig");
 const val = @import("value.zig");
+const vm = @import("vm.zig");
 
 const Precedence = enum(u4) {
     NONE = 0,
@@ -273,7 +275,9 @@ const FunctionType = enum {
     SCRIPT,
 };
 
-const Compiler = struct {
+pub const Compiler = struct {
+    allocator: *mem.Allocator,
+    stack: *vm.Stack,
     enclosing: ?*Compiler,
     parser: *Parser,
     strings: *tbl.Table,
@@ -284,6 +288,8 @@ const Compiler = struct {
     upvalues: [std.math.maxInt(u8) + 1]Upvalue,
     scopeDepth: usize,
     const default = Compiler{
+        .allocator = undefined,
+        .stack = undefined,
         .enclosing = null,
         .parser = undefined,
         .strings = undefined,
@@ -294,10 +300,13 @@ const Compiler = struct {
         .upvalues = undefined,
         .scopeDepth = 0,
     };
-    pub fn init(self: *Compiler, parser: *Parser, fnType: FunctionType, strings: *tbl.Table) !void {
+    pub fn init(self: *Compiler, allocator: *mem.Allocator, stack: *vm.Stack, parser: *Parser, fnType: FunctionType, strings: *tbl.Table) !void {
+        self.allocator = allocator;
+        self.stack = stack;
         self.parser = parser;
         self.strings = strings;
-        self.function = try obj.ObjFunction.create(strings.allocator);
+        self.function = try obj.ObjFunction.create(allocator);
+        self.allocator.compiler = self;
         if (fnType != .SCRIPT) {
             self.function.name = @fieldParentPtr("obj", try strings.copyString(self.parser.previous.lexeme));
         }
@@ -321,6 +330,11 @@ const Compiler = struct {
                 self.function.chunk,
                 if (self.function.name) |name| name.chars else "<script>",
             );
+        }
+        if (self.enclosing) |enclosing| {
+            self.allocator.compiler = enclosing;
+        } else {
+            self.allocator.compiler = null;
         }
         return self.function;
     }
@@ -511,8 +525,8 @@ const Compiler = struct {
     }
     fn fun(self: *Compiler, fnType: FunctionType) std.mem.Allocator.Error!void {
         var compiler = Compiler.default;
-        try compiler.init(self.parser, fnType, self.strings);
         compiler.enclosing = self;
+        try compiler.init(self.allocator, self.stack, self.parser, fnType, self.strings);
         compiler.beginScope();
         compiler.parser.consume(.TOKEN_LEFT_PAREN, "Expect '(' after function name.");
         if (!compiler.parser.check(.TOKEN_RIGHT_PAREN)) {
@@ -669,7 +683,7 @@ const Compiler = struct {
         return try self.makeConstant(val.Value.objVal(str));
     }
     fn makeConstant(self: *Compiler, value: val.Value) std.mem.Allocator.Error!u8 {
-        const constant = try self.function.chunk.addConstant(value);
+        const constant = try self.function.chunk.addConstant(value, self.stack);
         if (constant > std.math.maxInt(u8)) {
             self.parser.printError("Too many constants in one chunk.");
             return 0;
@@ -799,15 +813,21 @@ const Compiler = struct {
         self.function.upvalueCount += 1;
         return upvalueCount;
     }
+    pub fn markRoots(self: *Compiler) void {
+        self.function.obj.mark();
+        if (self.enclosing) |enclosing| {
+            enclosing.markRoots();
+        }
+    }
 };
 
-pub fn compile(source: []const u8, strings: *tbl.Table) !*obj.ObjFunction {
+pub fn compile(source: []const u8, allocator: *mem.Allocator, stack: *vm.Stack, strings: *tbl.Table) !*obj.ObjFunction {
     var scanner = scn.Scanner.default;
     scanner.init(source);
     var parser = Parser.default;
     parser.scanner = &scanner;
     var compiler = Compiler.default;
-    try compiler.init(&parser, .SCRIPT, strings);
+    try compiler.init(allocator, stack, &parser, .SCRIPT, strings);
 
     parser.advance();
     while (!parser.match(.TOKEN_EOF)) {

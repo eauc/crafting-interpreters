@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = @import("memory.zig");
 const val = @import("value.zig");
+const vm = @import("vm.zig");
 
 pub const Instruction = enum(u8) {
     OP_CONSTANT,
@@ -40,7 +41,7 @@ pub const OpCode = union(enum) {
 };
 
 pub const Chunk = struct {
-    allocator: std.mem.Allocator,
+    allocator: *mem.Allocator,
     count: usize,
     code: []OpCode,
     lines: []isize,
@@ -52,7 +53,7 @@ pub const Chunk = struct {
         .lines = &[_]isize{},
         .constants = val.ValueArray.default,
     };
-    pub fn init(self: *Chunk, allocator: std.mem.Allocator) void {
+    pub fn init(self: *Chunk, allocator: *mem.Allocator) void {
         self.allocator = allocator;
         self.count = 0;
         self.code = &[_]OpCode{};
@@ -61,8 +62,8 @@ pub const Chunk = struct {
     }
     pub fn free(self: *Chunk) void {
         self.constants.free();
-        self.allocator.free(self.code);
-        self.allocator.free(self.lines);
+        self.allocator.free(OpCode, self.code);
+        self.allocator.free(isize, self.lines);
         self.init(self.allocator);
     }
     pub fn write(self: *Chunk, opCode: OpCode, line: isize) !void {
@@ -76,8 +77,10 @@ pub const Chunk = struct {
         self.lines[self.count] = line;
         self.count += 1;
     }
-    pub fn addConstant(self: *Chunk, value: val.Value) !usize {
+    pub fn addConstant(self: *Chunk, value: val.Value, stack: *vm.Stack) !usize {
+        stack.push(value);
         try self.constants.write(value);
+        _ = stack.pop();
         return self.constants.count - 1;
     }
 };

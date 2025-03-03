@@ -1,23 +1,25 @@
 const std = @import("std");
 const chk = @import("chunk.zig");
 const dbg = @import("debug.zig");
+const mem = @import("memory.zig");
 const InterpretError = @import("vm.zig").InterpretError;
 const VM = @import("vm.zig").VM;
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
-    const allocator = arena.allocator();
+    const arenaAllocator = arena.allocator();
 
+    var allocator = mem.Allocator.init(arenaAllocator);
     var vm = VM.default;
-    try vm.init(allocator);
+    try vm.init(&allocator);
     defer vm.free();
 
-    const args = try std.process.argsAlloc(allocator);
+    const args = try std.process.argsAlloc(arenaAllocator);
     if (args.len == 1) {
         try repl(&vm);
     } else if (args.len == 2) {
-        try runFile(&vm, args[1], allocator);
+        try runFile(&vm, args[1], arenaAllocator);
     } else {
         std.debug.print("Usage: zlox [path]\n", .{});
     }
