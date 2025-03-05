@@ -50,7 +50,8 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_DOT)] = .{
-        .precedence = .NONE,
+        .infix = Compiler.dot,
+        .precedence = .CALL,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_MINUS)] = .{
         .prefix = Compiler.unary,
@@ -358,7 +359,9 @@ pub const Compiler = struct {
         }
     }
     pub fn declaration(self: *Compiler) std.mem.Allocator.Error!void {
-        if (self.parser.match(.TOKEN_FUN)) {
+        if (self.parser.match(.TOKEN_CLASS)) {
+            try self.classDeclaration();
+        } else if (self.parser.match(.TOKEN_FUN)) {
             try self.funDeclaration();
         } else if (self.parser.match(.TOKEN_VAR)) {
             try self.varDeclaration();
@@ -368,6 +371,15 @@ pub const Compiler = struct {
         if (self.parser.panicMode) {
             self.parser.synchronize();
         }
+    }
+    fn classDeclaration(self: *Compiler) std.mem.Allocator.Error!void {
+        self.parser.consume(.TOKEN_IDENTIFIER, "Expect class name.");
+        const nameConstant = try self.identifierConstant(self.parser.previous);
+        self.declareVariable();
+        try self.emitBytes(.{ .instruction = .OP_CLASS }, .{ .constant = nameConstant });
+        try self.defineVariable(nameConstant);
+        self.parser.consume(.TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+        self.parser.consume(.TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
     }
     fn funDeclaration(self: *Compiler) std.mem.Allocator.Error!void {
         const global = try self.parseVariable("Expect function name.");
@@ -596,6 +608,16 @@ pub const Compiler = struct {
         _ = canAssign;
         const argCount = try self.argumentsList();
         try self.emitBytes(.{ .instruction = .OP_CALL }, .{ .constant = argCount });
+    }
+    fn dot(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        self.parser.consume(.TOKEN_IDENTIFIER, "Expect property name after '.'.");
+        const name = try self.identifierConstant(self.parser.previous);
+        if (canAssign and self.parser.match(.TOKEN_EQUAL)) {
+            try self.expression();
+            try self.emitBytes(.{ .instruction = .OP_SET_PROPERTY }, .{ .constant = name });
+        } else {
+            try self.emitBytes(.{ .instruction = .OP_GET_PROPERTY }, .{ .constant = name });
+        }
     }
     fn argumentsList(self: *Compiler) std.mem.Allocator.Error!u8 {
         var argCount: u8 = 0;

@@ -1,11 +1,15 @@
 const std = @import("std");
 const chk = @import("chunk.zig");
 const mem = @import("memory.zig");
+const tbl = @import("table.zig");
 const val = @import("value.zig");
+const vm = @import("vm.zig");
 
 pub const ObjType = enum {
+    CLASS,
     CLOSURE,
     FUNCTION,
+    INSTANCE,
     NATIVE,
     STRING,
     UPVALUE,
@@ -33,6 +37,10 @@ pub const Obj = struct {
             });
         }
         switch (self.type) {
+            .CLASS => {
+                var class: *ObjClass = @fieldParentPtr("obj", self);
+                class.free();
+            },
             .CLOSURE => {
                 var closure: *ObjClosure = @fieldParentPtr("obj", self);
                 closure.free();
@@ -40,6 +48,10 @@ pub const Obj = struct {
             .FUNCTION => {
                 var function: *ObjFunction = @fieldParentPtr("obj", self);
                 function.free();
+            },
+            .INSTANCE => {
+                var instance: *ObjInstance = @fieldParentPtr("obj", self);
+                instance.free();
             },
             .NATIVE => {
                 var native: *ObjNative = @fieldParentPtr("obj", self);
@@ -79,6 +91,10 @@ pub const Obj = struct {
             std.debug.print("\n", .{});
         }
         switch (self.type) {
+            .CLASS => {
+                const class: *ObjClass = @fieldParentPtr("obj", self);
+                class.name.obj.mark();
+            },
             .CLOSURE => {
                 const closure: *ObjClosure = @fieldParentPtr("obj", self);
                 closure.function.obj.mark();
@@ -96,6 +112,11 @@ pub const Obj = struct {
                 }
                 function.chunk.constants.mark();
             },
+            .INSTANCE => {
+                const instance: *ObjInstance = @fieldParentPtr("obj", self);
+                instance.class.obj.mark();
+                instance.fields.markEntries();
+            },
             .NATIVE, .STRING => {},
             .UPVALUE => {
                 const upvalue: *ObjUpvalue = @fieldParentPtr("obj", self);
@@ -105,6 +126,10 @@ pub const Obj = struct {
     }
     pub fn print(self: *Obj) void {
         switch (self.type) {
+            .CLASS => {
+                const class: *ObjClass = @fieldParentPtr("obj", self);
+                class.print();
+            },
             .CLOSURE => {
                 const closure: *ObjClosure = @fieldParentPtr("obj", self);
                 closure.print();
@@ -112,6 +137,10 @@ pub const Obj = struct {
             .FUNCTION => {
                 const function: *ObjFunction = @fieldParentPtr("obj", self);
                 function.print();
+            },
+            .INSTANCE => {
+                const instance: *ObjInstance = @fieldParentPtr("obj", self);
+                instance.print();
             },
             .NATIVE => {
                 const native: *ObjNative = @fieldParentPtr("obj", self);
@@ -208,6 +237,45 @@ pub const ObjFunction = struct {
         } else {
             std.debug.print("<script>", .{});
         }
+    }
+};
+
+pub const ObjClass = struct {
+    obj: Obj,
+    name: *ObjString,
+
+    pub fn create(allocator: *mem.Allocator, name: *ObjString) !*ObjClass {
+        const class = try allocator.create(ObjClass);
+        class.obj.init(allocator, .CLASS);
+        class.name = name;
+        return class;
+    }
+    pub fn free(self: *ObjClass) void {
+        self.obj.allocator.destroy(ObjClass, self);
+    }
+    pub fn print(self: *const ObjClass) void {
+        std.debug.print("<class {s}>", .{self.name.chars});
+    }
+};
+
+pub const ObjInstance = struct {
+    obj: Obj,
+    class: *ObjClass,
+    fields: tbl.Table,
+
+    pub fn create(allocator: *mem.Allocator, class: *ObjClass, stack: *vm.Stack) !*ObjInstance {
+        const instance = try allocator.create(ObjInstance);
+        instance.obj.init(allocator, .INSTANCE);
+        instance.class = class;
+        instance.fields.init(allocator, stack);
+        return instance;
+    }
+    pub fn free(self: *ObjInstance) void {
+        self.fields.free();
+        self.obj.allocator.destroy(ObjInstance, self);
+    }
+    pub fn print(self: *const ObjInstance) void {
+        std.debug.print("<instance of {s}>", .{self.class.name.chars});
     }
 };
 

@@ -25,6 +25,8 @@ pub const Instruction = enum(u8) {
     OP_DEFINE_GLOBAL,
     OP_GET_UPVALUE,
     OP_SET_UPVALUE,
+    OP_GET_PROPERTY,
+    OP_SET_PROPERTY,
     OP_PRINT,
     OP_JUMP_IF_FALSE,
     OP_JUMP,
@@ -32,6 +34,7 @@ pub const Instruction = enum(u8) {
     OP_CALL,
     OP_CLOSURE,
     OP_CLOSE_UPVALUE,
+    OP_CLASS,
     OP_RETURN,
 };
 

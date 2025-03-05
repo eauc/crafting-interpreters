@@ -233,6 +233,35 @@ pub const VM = struct {
                     const slot = self.readByte().constant;
                     frame.closure.upvalues[slot].location.* = self.stack.peek(0);
                 },
+                .OP_GET_PROPERTY => {
+                    if (!self.stack.peek(0).isInstance()) {
+                        self.runtimeError("Only instances have properties.", .{});
+                        return InterpretError.RuntimeError;
+                    }
+                    const instance = self.stack.peek(0).asInstance();
+                    const name = self.readString();
+
+                    var value = val.Value.nilVal();
+                    if (instance.fields.get(name, &value)) {
+                        _ = self.stack.pop();
+                        self.stack.push(value);
+                    } else {
+                        self.runtimeError("Undefined property '{s}'.", .{name.chars});
+                        return InterpretError.RuntimeError;
+                    }
+                },
+                .OP_SET_PROPERTY => {
+                    if (!self.stack.peek(1).isInstance()) {
+                        self.runtimeError("Only instances have properties.", .{});
+                        return InterpretError.RuntimeError;
+                    }
+                    const instance = self.stack.peek(1).asInstance();
+                    const name = self.readString();
+                    _ = try instance.fields.set(name, self.stack.peek(0));
+                    const value = self.stack.pop();
+                    _ = self.stack.pop();
+                    self.stack.push(value);
+                },
                 .OP_PRINT => {
                     val.printValue(self.stack.pop());
                     std.debug.print("\n", .{});
@@ -276,6 +305,10 @@ pub const VM = struct {
                 .OP_CLOSE_UPVALUE => {
                     self.stack.closeUpvalues(&self.stack.stack[self.stack.stackTop - 1]);
                     _ = self.stack.pop();
+                },
+                .OP_CLASS => {
+                    const class = try obj.ObjClass.create(self.allocator, self.readString());
+                    self.stack.push(val.Value.objVal(&class.obj));
                 },
                 .OP_RETURN => {
                     const result = self.stack.pop();
@@ -348,6 +381,12 @@ pub const VM = struct {
             switch (callee.objType()) {
                 .CLOSURE => {
                     return self.call(callee.asClosure(), argCount);
+                },
+                .CLASS => {
+                    const class = callee.asClass();
+                    const instance = try obj.ObjInstance.create(self.allocator, class, &self.stack);
+                    self.stack.stack[self.stack.stackTop - argCount - 1] = val.Value.objVal(&instance.obj);
+                    return;
                 },
                 .NATIVE => {
                     const result = callee.asNative().function(

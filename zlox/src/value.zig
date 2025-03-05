@@ -58,11 +58,17 @@ pub const Value = struct {
     pub fn isObjType(self: Value, expectedObjType: obj.ObjType) bool {
         return self.isObj() and self.objType() == expectedObjType;
     }
+    pub fn isClass(self: Value) bool {
+        return self.isObjType(.CLASS);
+    }
     pub fn isClosure(self: Value) bool {
         return self.isObjType(.CLOSURE);
     }
     pub fn isFunction(self: Value) bool {
         return self.isObjType(.FUNCTION);
+    }
+    pub fn isInstance(self: Value) bool {
+        return self.isObjType(.INSTANCE);
     }
     pub fn isNative(self: Value) bool {
         return self.isObjType(.NATIVE);
@@ -79,10 +85,16 @@ pub const Value = struct {
     pub fn asObj(self: Value) *obj.Obj {
         return self.as.OBJ;
     }
+    pub fn asClass(self: Value) *obj.ObjClass {
+        return @fieldParentPtr("obj", self.asObj());
+    }
     pub fn asClosure(self: Value) *obj.ObjClosure {
         return @fieldParentPtr("obj", self.asObj());
     }
     pub fn asFunction(self: Value) *obj.ObjFunction {
+        return @fieldParentPtr("obj", self.asObj());
+    }
+    pub fn asInstance(self: Value) *obj.ObjInstance {
         return @fieldParentPtr("obj", self.asObj());
     }
     pub fn asNative(self: Value) *obj.ObjNative {

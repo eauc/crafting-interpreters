@@ -92,6 +92,12 @@ pub fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
         .OP_SET_UPVALUE => {
             return byteInstruction("OP_SET_UPVALUE", chunk, offset);
         },
+        .OP_GET_PROPERTY => {
+            return constantInstruction("OP_GET_PROPERTY", chunk, offset);
+        },
+        .OP_SET_PROPERTY => {
+            return constantInstruction("OP_SET_PROPERTY", chunk, offset);
+        },
         .OP_PRINT => {
             return simpleInstruction("OP_PRINT", offset);
         },
@@ -134,6 +140,9 @@ pub fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
         },
         .OP_CLOSE_UPVALUE => {
             return simpleInstruction("OP_CLOSE_UPVALUE", offset);
+        },
+        .OP_CLASS => {
+            return constantInstruction("OP_CLASS", chunk, offset);
         },
         .OP_RETURN => {
             return simpleInstruction("OP_RETURN", offset);
