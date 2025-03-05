@@ -36,10 +36,21 @@ static void freeObject(Obj *object) {
   printf("%p free type %d\n", object, object->type);
 #endif
   switch (object->type) {
+  case OBJ_CLASS: {
+    ObjClass *klass = (ObjClass *)object;
+    FREE(ObjClass, object);
+    break;
+  }
   case OBJ_CLOSURE: {
     ObjClosure *closure = (ObjClosure *)object;
     FREE_ARRAY(ObjUpvalue *, closure->upvalues, closure->upvalueCount);
     FREE(ObjClosure, object);
+    break;
+  }
+  case OBJ_INSTANCE: {
+    ObjInstance *instance = (ObjInstance *)object;
+    freeTable(&instance->fields);
+    FREE(ObjInstance, object);
     break;
   }
   case OBJ_FUNCTION: {
@@ -124,11 +135,16 @@ static void blackenObject(Obj *object) {
   printf("\n");
 #endif
   switch (object->type) {
+  case OBJ_CLASS: {
+    ObjClass *klass = (ObjClass *)object;
+    markObject((Obj *)klass->name);
+    break;
+  }
   case OBJ_CLOSURE: {
     ObjClosure *closure = (ObjClosure *)object;
-    markObject((Obj*)closure->function);
-    for (size_t i =0; i < closure->upvalueCount; i++) {
-      markObject((Obj*)closure->upvalues[i]);
+    markObject((Obj *)closure->function);
+    for (size_t i = 0; i < closure->upvalueCount; i++) {
+      markObject((Obj *)closure->upvalues[i]);
     }
     break;
   }
@@ -136,6 +152,12 @@ static void blackenObject(Obj *object) {
     ObjFunction *function = (ObjFunction *)object;
     markObject((Obj *)function->name);
     markArray(&function->chunk.constants);
+    break;
+  }
+  case OBJ_INSTANCE: {
+    ObjInstance *instance = (ObjInstance *)object;
+    markObject((Obj *)instance->klass);
+    markTable(&instance->fields);
     break;
   }
   case OBJ_NATIVE:
@@ -189,8 +211,7 @@ void collectGarbage() {
 #ifdef DEBUG_LOG_GC
   printf("-- gc end\n");
   printf("   collected %zu bytes (from %zu to %zu) next at %zu\n",
-         before - vm.bytesAllocated, before, vm.bytesAllocated,
-         vm.nextGC);
+         before - vm.bytesAllocated, before, vm.bytesAllocated, vm.nextGC);
 #endif
 }
 
