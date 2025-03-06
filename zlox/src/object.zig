@@ -6,6 +6,7 @@ const val = @import("value.zig");
 const vm = @import("vm.zig");
 
 pub const ObjType = enum {
+    BOUND_METHOD,
     CLASS,
     CLOSURE,
     FUNCTION,
@@ -37,6 +38,10 @@ pub const Obj = struct {
             });
         }
         switch (self.type) {
+            .BOUND_METHOD => {
+                var boundMethod: *ObjBoundMethod = @fieldParentPtr("obj", self);
+                boundMethod.free();
+            },
             .CLASS => {
                 var class: *ObjClass = @fieldParentPtr("obj", self);
                 class.free();
@@ -91,18 +96,21 @@ pub const Obj = struct {
             std.debug.print("\n", .{});
         }
         switch (self.type) {
+            .BOUND_METHOD => {
+                const boundMethod: *ObjBoundMethod = @fieldParentPtr("obj", self);
+                boundMethod.receiver.mark();
+                boundMethod.method.obj.mark();
+            },
             .CLASS => {
                 const class: *ObjClass = @fieldParentPtr("obj", self);
                 class.name.obj.mark();
+                class.methods.markEntries();
             },
             .CLOSURE => {
                 const closure: *ObjClosure = @fieldParentPtr("obj", self);
                 closure.function.obj.mark();
-                std.debug.print("{d} upvalues\n", .{closure.upvalueCount});
                 for (0..closure.upvalueCount) |i| {
-                    std.debug.print("{d}\n", .{i});
                     closure.upvalues[i].obj.mark();
-                    std.debug.print("{d}\n", .{i});
                 }
             },
             .FUNCTION => {
@@ -126,6 +134,10 @@ pub const Obj = struct {
     }
     pub fn print(self: *Obj) void {
         switch (self.type) {
+            .BOUND_METHOD => {
+                const boundMethod: *ObjBoundMethod = @fieldParentPtr("obj", self);
+                boundMethod.print();
+            },
             .CLASS => {
                 const class: *ObjClass = @fieldParentPtr("obj", self);
                 class.print();
@@ -243,14 +255,17 @@ pub const ObjFunction = struct {
 pub const ObjClass = struct {
     obj: Obj,
     name: *ObjString,
+    methods: tbl.Table,
 
-    pub fn create(allocator: *mem.Allocator, name: *ObjString) !*ObjClass {
+    pub fn create(allocator: *mem.Allocator, name: *ObjString, stack: *vm.Stack) !*ObjClass {
         const class = try allocator.create(ObjClass);
         class.obj.init(allocator, .CLASS);
         class.name = name;
+        class.methods.init(allocator, stack);
         return class;
     }
     pub fn free(self: *ObjClass) void {
+        self.methods.free();
         self.obj.allocator.destroy(ObjClass, self);
     }
     pub fn print(self: *const ObjClass) void {
@@ -276,6 +291,26 @@ pub const ObjInstance = struct {
     }
     pub fn print(self: *const ObjInstance) void {
         std.debug.print("<instance of {s}>", .{self.class.name.chars});
+    }
+};
+
+pub const ObjBoundMethod = struct {
+    obj: Obj,
+    receiver: val.Value,
+    method: *ObjClosure,
+
+    pub fn create(allocator: *mem.Allocator, receiver: val.Value, method: *ObjClosure) !*ObjBoundMethod {
+        const boundMethod = try allocator.create(ObjBoundMethod);
+        boundMethod.obj.init(allocator, .BOUND_METHOD);
+        boundMethod.receiver = receiver;
+        boundMethod.method = method;
+        return boundMethod;
+    }
+    pub fn free(self: *ObjBoundMethod) void {
+        self.obj.allocator.destroy(ObjBoundMethod, self);
+    }
+    pub fn print(self: *const ObjBoundMethod) void {
+        self.method.print();
     }
 };
 

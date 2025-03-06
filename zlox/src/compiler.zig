@@ -157,6 +157,7 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_THIS)] = .{
+        .prefix = Compiler.this,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_TRUE)] = .{
@@ -272,14 +273,21 @@ const Parser = struct {
 };
 
 const FunctionType = enum {
+    INITIALIZER,
     FUNCTION,
+    METHOD,
     SCRIPT,
+};
+
+const ClassCompiler = struct {
+    enclosing: ?*const ClassCompiler,
 };
 
 pub const Compiler = struct {
     allocator: *mem.Allocator,
     stack: *vm.Stack,
     enclosing: ?*Compiler,
+    currentClass: ?*const ClassCompiler,
     parser: *Parser,
     strings: *tbl.Table,
     function: *obj.ObjFunction,
@@ -292,6 +300,7 @@ pub const Compiler = struct {
         .allocator = undefined,
         .stack = undefined,
         .enclosing = null,
+        .currentClass = null,
         .parser = undefined,
         .strings = undefined,
         .function = undefined,
@@ -301,9 +310,18 @@ pub const Compiler = struct {
         .upvalues = undefined,
         .scopeDepth = 0,
     };
-    pub fn init(self: *Compiler, allocator: *mem.Allocator, stack: *vm.Stack, parser: *Parser, fnType: FunctionType, strings: *tbl.Table) !void {
+    pub fn init(
+        self: *Compiler,
+        allocator: *mem.Allocator,
+        stack: *vm.Stack,
+        parser: *Parser,
+        fnType: FunctionType,
+        strings: *tbl.Table,
+        currentClass: ?*const ClassCompiler,
+    ) !void {
         self.allocator = allocator;
         self.stack = stack;
+        self.currentClass = currentClass;
         self.parser = parser;
         self.strings = strings;
         self.function = try obj.ObjFunction.create(allocator);
@@ -312,15 +330,27 @@ pub const Compiler = struct {
             self.function.name = @fieldParentPtr("obj", try strings.copyString(self.parser.previous.lexeme));
         }
         self.type = fnType;
-        self.locals[0] = .{
-            .name = scn.Token{
-                .type = .TOKEN_STRING,
-                .lexeme = "",
-                .line = 0,
-            },
-            .depth = 0,
-            .isCaptured = false,
-        };
+        if (self.type != .FUNCTION) {
+            self.locals[0] = .{
+                .name = scn.Token{
+                    .type = .TOKEN_STRING,
+                    .lexeme = "this",
+                    .line = 0,
+                },
+                .depth = 0,
+                .isCaptured = false,
+            };
+        } else {
+            self.locals[0] = .{
+                .name = scn.Token{
+                    .type = .TOKEN_STRING,
+                    .lexeme = "",
+                    .line = 0,
+                },
+                .depth = 0,
+                .isCaptured = false,
+            };
+        }
         self.localCount = 1;
         self.scopeDepth = 0;
     }
@@ -374,12 +404,24 @@ pub const Compiler = struct {
     }
     fn classDeclaration(self: *Compiler) std.mem.Allocator.Error!void {
         self.parser.consume(.TOKEN_IDENTIFIER, "Expect class name.");
-        const nameConstant = try self.identifierConstant(self.parser.previous);
+        const className = self.parser.previous;
+        const nameConstant = try self.identifierConstant(className);
         self.declareVariable();
         try self.emitBytes(.{ .instruction = .OP_CLASS }, .{ .constant = nameConstant });
         try self.defineVariable(nameConstant);
+
+        const classCompiler = ClassCompiler{ .enclosing = self.currentClass };
+        self.currentClass = &classCompiler;
+
+        try self.namedVariable(className, false);
         self.parser.consume(.TOKEN_LEFT_BRACE, "Expect '{' before class body.");
+        while (!self.parser.check(.TOKEN_RIGHT_BRACE) and !self.parser.check(.TOKEN_EOF)) {
+            try self.method();
+        }
         self.parser.consume(.TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
+        try self.emitByte(.{ .instruction = .OP_POP });
+
+        self.currentClass = self.currentClass.?.enclosing;
     }
     fn funDeclaration(self: *Compiler) std.mem.Allocator.Error!void {
         const global = try self.parseVariable("Expect function name.");
@@ -461,6 +503,9 @@ pub const Compiler = struct {
         if (self.parser.match(.TOKEN_SEMICOLON)) {
             try self.emitReturn();
         } else {
+            if (self.type == .INITIALIZER) {
+                self.parser.printError("Can't return a value from an initializer.");
+            }
             try self.expression();
             self.parser.consume(.TOKEN_SEMICOLON, "Expect ';' after return value.");
             try self.emitByte(.{ .instruction = .OP_RETURN });
@@ -538,7 +583,7 @@ pub const Compiler = struct {
     fn fun(self: *Compiler, fnType: FunctionType) std.mem.Allocator.Error!void {
         var compiler = Compiler.default;
         compiler.enclosing = self;
-        try compiler.init(self.allocator, self.stack, self.parser, fnType, self.strings);
+        try compiler.init(self.allocator, self.stack, self.parser, fnType, self.strings, self.currentClass);
         compiler.beginScope();
         compiler.parser.consume(.TOKEN_LEFT_PAREN, "Expect '(' after function name.");
         if (!compiler.parser.check(.TOKEN_RIGHT_PAREN)) {
@@ -565,6 +610,16 @@ pub const Compiler = struct {
             } });
             try self.emitByte(.{ .constant = compiler.upvalues[i].index });
         }
+    }
+    fn method(self: *Compiler) std.mem.Allocator.Error!void {
+        self.parser.consume(.TOKEN_IDENTIFIER, "Expect method name.");
+        const constant = try self.identifierConstant(self.parser.previous);
+        var fnType: FunctionType = .METHOD;
+        if (std.mem.eql(u8, self.parser.previous.lexeme, "init")) {
+            fnType = .INITIALIZER;
+        }
+        try self.fun(fnType);
+        try self.emitBytes(.{ .instruction = .OP_METHOD }, .{ .constant = constant });
     }
     fn expression(self: *Compiler) std.mem.Allocator.Error!void {
         try self.parsePrecedence(.ASSIGNMENT);
@@ -615,6 +670,10 @@ pub const Compiler = struct {
         if (canAssign and self.parser.match(.TOKEN_EQUAL)) {
             try self.expression();
             try self.emitBytes(.{ .instruction = .OP_SET_PROPERTY }, .{ .constant = name });
+        } else if (self.parser.match(.TOKEN_LEFT_PAREN)) {
+            const argCount = try self.argumentsList();
+            try self.emitBytes(.{ .instruction = .OP_INVOKE }, .{ .constant = name });
+            try self.emitByte(.{ .constant = argCount });
         } else {
             try self.emitBytes(.{ .instruction = .OP_GET_PROPERTY }, .{ .constant = name });
         }
@@ -670,6 +729,14 @@ pub const Compiler = struct {
     }
     fn variable(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
         try self.namedVariable(self.parser.previous, canAssign);
+    }
+    fn this(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        if (self.currentClass) |_| {
+            return self.variable(canAssign);
+        } else {
+            self.parser.printError("Can't use 'this' outside of a class.");
+            return;
+        }
     }
     fn namedVariable(self: *Compiler, name: scn.Token, canAssign: bool) std.mem.Allocator.Error!void {
         var getOp: chk.Instruction = undefined;
@@ -742,7 +809,11 @@ pub const Compiler = struct {
         try self.emitBytes(.{ .instruction = .OP_CONSTANT }, .{ .constant = constant });
     }
     fn emitReturn(self: *Compiler) std.mem.Allocator.Error!void {
-        try self.emitByte(.{ .instruction = .OP_NIL });
+        if (self.type == .INITIALIZER) {
+            try self.emitBytes(.{ .instruction = .OP_GET_LOCAL }, .{ .constant = 0 });
+        } else {
+            try self.emitByte(.{ .instruction = .OP_NIL });
+        }
         try self.emitByte(.{ .instruction = .OP_RETURN });
     }
     fn emitLoop(self: *Compiler, loopStart: usize) std.mem.Allocator.Error!void {
@@ -849,7 +920,7 @@ pub fn compile(source: []const u8, allocator: *mem.Allocator, stack: *vm.Stack, 
     var parser = Parser.default;
     parser.scanner = &scanner;
     var compiler = Compiler.default;
-    try compiler.init(allocator, stack, &parser, .SCRIPT, strings);
+    try compiler.init(allocator, stack, &parser, .SCRIPT, strings, null);
 
     parser.advance();
     while (!parser.match(.TOKEN_EOF)) {

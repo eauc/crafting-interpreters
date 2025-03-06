@@ -113,6 +113,9 @@ pub fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
         .OP_CALL => {
             return byteInstruction("OP_CALL", chunk, offset);
         },
+        .OP_INVOKE => {
+            return invokeInstruction("OP_INVOKE", chunk, offset);
+        },
         .OP_CLOSURE => {
             var off = offset;
             off += 1;
@@ -144,6 +147,9 @@ pub fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
         .OP_CLASS => {
             return constantInstruction("OP_CLASS", chunk, offset);
         },
+        .OP_METHOD => {
+            return constantInstruction("OP_METHOD", chunk, offset);
+        },
         .OP_RETURN => {
             return simpleInstruction("OP_RETURN", offset);
         },
@@ -159,6 +165,13 @@ fn byteInstruction(name: []const u8, chunk: chk.Chunk, offset: usize) usize {
     const slot = chunk.code[offset + 1].constant;
     std.debug.print("{s: <16} {d: >4}\n", .{ name, slot });
     return offset + 2;
+}
+
+fn invokeInstruction(name: []const u8, chunk: chk.Chunk, offset: usize) usize {
+    const constant = chunk.code[offset + 1].constant;
+    const argCount = chunk.code[offset + 2].constant;
+    std.debug.print("{s: <16} ({d} args) {d: >4}\n", .{ name, argCount, constant });
+    return offset + 3;
 }
 
 fn constantInstruction(name: []const u8, chunk: chk.Chunk, offset: usize) usize {

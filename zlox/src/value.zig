@@ -58,6 +58,9 @@ pub const Value = struct {
     pub fn isObjType(self: Value, expectedObjType: obj.ObjType) bool {
         return self.isObj() and self.objType() == expectedObjType;
     }
+    pub fn isBoundMethod(self: Value) bool {
+        return self.isObjType(.BOUND_METHOD);
+    }
     pub fn isClass(self: Value) bool {
         return self.isObjType(.CLASS);
     }
@@ -84,6 +87,9 @@ pub const Value = struct {
     }
     pub fn asObj(self: Value) *obj.Obj {
         return self.as.OBJ;
+    }
+    pub fn asBoundMethod(self: Value) *obj.ObjBoundMethod {
+        return @fieldParentPtr("obj", self.asObj());
     }
     pub fn asClass(self: Value) *obj.ObjClass {
         return @fieldParentPtr("obj", self.asObj());
