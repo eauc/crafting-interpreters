@@ -87,10 +87,10 @@ pub const Table = struct {
             return false;
         }
     }
-    pub fn addAll(self: *Table, other: *Table) void {
+    pub fn addAll(self: *Table, other: *Table) !void {
         for (other.entries) |entry| {
             if (entry.key) |key| {
-                self.set(key, entry.value);
+                _ = try self.set(key, entry.value);
             }
         }
     }

@@ -4,7 +4,7 @@ const obj = @import("object.zig");
 const vm = @import("vm.zig");
 
 const STRESS_GC = true;
-pub const LOG_GC = true;
+pub const LOG_GC = false;
 const GC_HEAP_GROWTH_FACTOR = 2;
 
 pub const Allocator = struct {

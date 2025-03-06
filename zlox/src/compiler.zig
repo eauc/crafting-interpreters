@@ -154,6 +154,7 @@ const rules = init_rules: {
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_SUPER)] = .{
+        .prefix = Compiler.super,
         .precedence = .NONE,
     };
     array[@intFromEnum(scn.TokenType.TOKEN_THIS)] = .{
@@ -281,6 +282,7 @@ const FunctionType = enum {
 
 const ClassCompiler = struct {
     enclosing: ?*const ClassCompiler,
+    hasSuperclass: bool,
 };
 
 pub const Compiler = struct {
@@ -402,6 +404,14 @@ pub const Compiler = struct {
             self.parser.synchronize();
         }
     }
+    fn syntheticToken(self: *Compiler, lexeme: []const u8) scn.Token {
+        _ = self;
+        return .{
+            .type = .TOKEN_IDENTIFIER,
+            .lexeme = lexeme,
+            .line = 0,
+        };
+    }
     fn classDeclaration(self: *Compiler) std.mem.Allocator.Error!void {
         self.parser.consume(.TOKEN_IDENTIFIER, "Expect class name.");
         const className = self.parser.previous;
@@ -410,8 +420,27 @@ pub const Compiler = struct {
         try self.emitBytes(.{ .instruction = .OP_CLASS }, .{ .constant = nameConstant });
         try self.defineVariable(nameConstant);
 
-        const classCompiler = ClassCompiler{ .enclosing = self.currentClass };
+        var classCompiler = ClassCompiler{
+            .enclosing = self.currentClass,
+            .hasSuperclass = false,
+        };
         self.currentClass = &classCompiler;
+
+        if (self.parser.match(.TOKEN_LESS)) {
+            self.parser.consume(.TOKEN_IDENTIFIER, "Expect superclass name.");
+            try self.variable(false);
+            if (self.parser.previous.identifiersEqual(className)) {
+                self.parser.printError("A class can't inherit from itself.");
+            }
+
+            self.beginScope();
+            self.addLocal(self.syntheticToken("super"));
+            try self.defineVariable(0);
+
+            try self.namedVariable(className, false);
+            try self.emitByte(.{ .instruction = .OP_INHERIT });
+            classCompiler.hasSuperclass = true;
+        }
 
         try self.namedVariable(className, false);
         self.parser.consume(.TOKEN_LEFT_BRACE, "Expect '{' before class body.");
@@ -421,6 +450,9 @@ pub const Compiler = struct {
         self.parser.consume(.TOKEN_RIGHT_BRACE, "Expect '}' after class body.");
         try self.emitByte(.{ .instruction = .OP_POP });
 
+        if (classCompiler.hasSuperclass) {
+            try self.endScope();
+        }
         self.currentClass = self.currentClass.?.enclosing;
     }
     fn funDeclaration(self: *Compiler) std.mem.Allocator.Error!void {
@@ -736,6 +768,30 @@ pub const Compiler = struct {
         } else {
             self.parser.printError("Can't use 'this' outside of a class.");
             return;
+        }
+    }
+    fn super(self: *Compiler, canAssign: bool) std.mem.Allocator.Error!void {
+        _ = canAssign;
+        if (self.currentClass) |currentClass| {
+            if (!currentClass.hasSuperclass) {
+                self.parser.printError("Can't use 'super' in a class with no superclass.");
+            }
+        } else {
+            self.parser.printError("Can't use 'super' outside of a class.");
+        }
+        self.parser.consume(.TOKEN_DOT, "Expect '.' after 'super'.");
+        self.parser.consume(.TOKEN_IDENTIFIER, "Expect superclass method name.");
+        const name = try self.identifierConstant(self.parser.previous);
+
+        try self.namedVariable(self.syntheticToken("this"), false);
+        if (self.parser.match(.TOKEN_LEFT_PAREN)) {
+            const argCount = try self.argumentsList();
+            try self.namedVariable(self.syntheticToken("super"), false);
+            try self.emitBytes(.{ .instruction = .OP_SUPER_INVOKE }, .{ .constant = name });
+            try self.emitByte(.{ .constant = argCount });
+        } else {
+            try self.namedVariable(self.syntheticToken("super"), false);
+            try self.emitBytes(.{ .instruction = .OP_GET_SUPER }, .{ .constant = name });
         }
     }
     fn namedVariable(self: *Compiler, name: scn.Token, canAssign: bool) std.mem.Allocator.Error!void {

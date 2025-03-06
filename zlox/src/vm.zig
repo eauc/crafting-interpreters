@@ -292,6 +292,12 @@ pub const VM = struct {
                     const argCount = self.readByte().constant;
                     try self.invoke(method, argCount);
                 },
+                .OP_SUPER_INVOKE => {
+                    const method = self.readString();
+                    const argCount = self.readByte().constant;
+                    const superclass = self.stack.pop().asClass();
+                    try self.invokeFromClass(superclass, method, argCount);
+                },
                 .OP_CLOSURE => {
                     const function = self.readConstant().asFunction();
                     var closure = try obj.ObjClosure.create(self.allocator, function);
@@ -317,6 +323,21 @@ pub const VM = struct {
                 .OP_CLASS => {
                     const class = try obj.ObjClass.create(self.allocator, self.readString(), &self.stack);
                     self.stack.push(val.Value.objVal(&class.obj));
+                },
+                .OP_INHERIT => {
+                    const superclass = self.stack.peek(1);
+                    if (!superclass.isClass()) {
+                        self.runtimeError("Superclass must be a class.", .{});
+                        return InterpretError.RuntimeError;
+                    }
+                    const subclass = self.stack.peek(0).asClass();
+                    try subclass.methods.addAll(&superclass.asClass().methods);
+                    _ = self.stack.pop();
+                },
+                .OP_GET_SUPER => {
+                    const name = self.readString();
+                    const superclass = self.stack.pop().asClass();
+                    try self.bindMethod(superclass, name);
                 },
                 .OP_METHOD => {
                     try self.defineMethod(self.readString());

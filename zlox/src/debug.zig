@@ -116,6 +116,9 @@ pub fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
         .OP_INVOKE => {
             return invokeInstruction("OP_INVOKE", chunk, offset);
         },
+        .OP_SUPER_INVOKE => {
+            return invokeInstruction("OP_SUPER_INVOKE", chunk, offset);
+        },
         .OP_CLOSURE => {
             var off = offset;
             off += 1;
@@ -146,6 +149,12 @@ pub fn disassembleInstruction(chunk: chk.Chunk, offset: usize) usize {
         },
         .OP_CLASS => {
             return constantInstruction("OP_CLASS", chunk, offset);
+        },
+        .OP_INHERIT => {
+            return simpleInstruction("OP_INHERIT", offset);
+        },
+        .OP_GET_SUPER => {
+            return constantInstruction("OP_GET_SUPER", chunk, offset);
         },
         .OP_METHOD => {
             return constantInstruction("OP_METHOD", chunk, offset);
